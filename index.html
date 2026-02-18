@@ -1,0 +1,833 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>FireGuild</title>
+
+<style>
+*{margin:0;padding:0;box-sizing:border-box;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+body{background:#0f1419;height:100vh;overflow:hidden}
+
+/* AUTH */
+.auth{
+height:100vh;
+display:flex;
+align-items:center;
+justify-content:center;
+background:#0f1419;
+padding:16px;
+}
+
+.auth-box{
+width:100%;
+max-width:340px;
+background:#17212b;
+padding:32px;
+border-radius:12px;
+box-shadow:0 4px 12px rgba(0,0,0,0.3);
+}
+
+.auth-box h2{
+color:#fff;
+margin-bottom:24px;
+text-align:center;
+font-size:24px;
+}
+
+.auth-box input{
+width:100%;
+padding:14px;
+margin-bottom:12px;
+background:#1c2733;
+border:none;
+border-radius:8px;
+color:#fff;
+outline:none;
+font-size:16px;
+}
+
+.auth-box button{
+width:100%;
+padding:14px;
+border:none;
+border-radius:8px;
+background:#5865f2;
+color:#fff;
+cursor:pointer;
+font-size:16px;
+font-weight:500;
+transition:background 0.2s;
+margin-bottom:8px;
+}
+
+.auth-box button:last-child {
+margin-bottom: 0;
+}
+
+.auth-box button.register {
+background:#2b5278;
+}
+
+.auth-box button.register:active {
+background:#1d3b55;
+}
+
+/* APP */
+.app{
+display:none;
+height:100vh;
+position:relative;
+}
+
+.menu-toggle{
+display:none;
+position:fixed;
+bottom:20px;
+left:20px;
+width:56px;
+height:56px;
+border-radius:50%;
+background:#5865f2;
+color:#fff;
+border:none;
+font-size:24px;
+cursor:pointer;
+box-shadow:0 4px 12px rgba(0,0,0,0.3);
+z-index:100;
+transition:transform 0.2s;
+}
+
+.menu-toggle:active{transform:scale(0.95);}
+
+.sidebar{
+width:300px;
+background:#17212b;
+border-right:1px solid #222c36;
+display:flex;
+flex-direction:column;
+transition:transform 0.3s ease;
+}
+
+.user{
+padding:20px 16px;
+display:flex;
+align-items:center;
+gap:12px;
+border-bottom:1px solid #222c36;
+position:relative;
+}
+
+.avatar{
+width:48px;
+height:48px;
+border-radius:50%;
+background:#5865f2;
+display:flex;
+align-items:center;
+justify-content:center;
+color:#fff;
+font-weight:600;
+font-size:20px;
+transition:background 0.3s;
+flex-shrink:0;
+}
+
+.user-info{
+overflow:hidden;
+flex:1;
+}
+
+.user-info span{
+color:#fff;
+font-weight:500;
+font-size:16px;
+display:block;
+white-space:nowrap;
+overflow:hidden;
+text-overflow:ellipsis;
+}
+
+.logout-btn{
+background:#d32f2f;
+color:white;
+border:none;
+padding:6px 12px;
+border-radius:6px;
+cursor:pointer;
+font-size:12px;
+transition:background 0.2s;
+margin-left:auto;
+}
+
+.logout-btn:active {
+background:#b71c1c;
+}
+
+.chat-list{
+flex:1;
+overflow-y:auto;
+-webkit-overflow-scrolling:touch;
+}
+
+.chat-item{
+padding:16px;
+cursor:pointer;
+transition:background 0.15s;
+border-bottom:1px solid #1f2a35;
+}
+
+.chat-item:active{background:#1f2a35;}
+.chat-item.active{background:#2b3945;}
+.chat-item span{color:#fff;font-weight:500;font-size:15px;}
+.chat-item p{color:#8b98a5;font-size:13px;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+
+/* CHAT AREA */
+.chat{
+flex:1;
+display:flex;
+flex-direction:column;
+background:#0f1419;
+}
+
+.chat-header{
+padding:16px 20px;
+background:#17212b;
+border-bottom:1px solid #222c36;
+color:#fff;
+font-weight:500;
+font-size:16px;
+display:flex;
+align-items:center;
+gap:12px;
+}
+
+.back-btn{
+display:none;
+background:none;
+border:none;
+color:#fff;
+font-size:20px;
+cursor:pointer;
+padding:0 8px;
+}
+
+.messages{
+flex:1;
+overflow-y:auto;
+padding:16px;
+display:flex;
+flex-direction:column;
+gap:12px;
+-webkit-overflow-scrolling:touch;
+}
+
+.msg{
+max-width:85%;
+padding:12px 16px;
+border-radius:18px;
+font-size:15px;
+animation:fade 0.15s ease;
+word-break:break-word;
+}
+
+.mine{
+align-self:flex-end;
+background:#2b5278;
+color:#fff;
+border-bottom-right-radius:4px;
+}
+
+.other{
+align-self:flex-start;
+background:#1c2733;
+color:#fff;
+border-bottom-left-radius:4px;
+}
+
+.time{
+font-size:11px;
+opacity:.6;
+margin-top:6px;
+text-align:right;
+white-space:nowrap;
+}
+
+.input{
+padding:12px 16px;
+background:#17212b;
+display:flex;
+gap:8px;
+border-top:1px solid #222c36;
+}
+
+.input input{
+flex:1;
+padding:12px 16px;
+border-radius:24px;
+border:none;
+background:#1c2733;
+color:#fff;
+outline:none;
+font-size:15px;
+}
+
+.input button{
+width:44px;
+height:44px;
+border-radius:50%;
+border:none;
+background:#5865f2;
+color:#fff;
+cursor:pointer;
+font-size:18px;
+transition:background 0.2s;
+flex-shrink:0;
+}
+
+.input button:active{background:#4752c4;}
+.input button:disabled{background:#404e6b; cursor:not-allowed;}
+
+/* Mobile styles */
+@media (max-width: 768px) {
+.menu-toggle{display:block;}
+.back-btn{display:block;}
+.sidebar{
+position:fixed;
+left:0;
+top:0;
+bottom:0;
+z-index:90;
+transform:translateX(-100%);
+}
+.sidebar.active{transform:translateX(0);}
+.chat-header{padding-left:12px;}
+.msg{max-width:90%;}
+}
+
+/* Small phones */
+@media (max-width: 480px) {
+.auth-box{padding:24px;}
+.user{padding:16px;}
+.chat-item{padding:14px;}
+.msg{font-size:14px;padding:10px 14px;}
+.input{padding:10px 12px;}
+.input input{padding:10px 14px;}
+}
+
+@keyframes fade{
+from{opacity:0;transform:translateY(4px)}
+to{opacity:1;transform:translateY(0)}
+}
+</style>
+</head>
+
+<body>
+
+<div class="auth" id="auth">
+<div class="auth-box">
+<h2>🔥 FireGuild</h2>
+<input id="loginUser" placeholder="Username" autocomplete="username">
+<input id="loginPass" type="password" placeholder="Password" autocomplete="current-password">
+<button id="loginBtn">Войти</button>
+<button id="registerBtn" class="register">Зарегистрироваться</button>
+</div>
+</div>
+
+<div class="app" id="app">
+<button class="menu-toggle" id="menuToggle">☰</button>
+
+<div class="sidebar" id="sidebar">
+<div class="user">
+<div class="avatar" id="myAvatar">?</div>
+<div class="user-info">
+<span id="myName"></span>
+</div>
+<button class="logout-btn" id="logoutBtn">Выйти</button>
+</div>
+<div class="chat-list" id="chatList"></div>
+</div>
+
+<div class="chat">
+<div class="chat-header">
+<button class="back-btn" id="backBtn">←</button>
+<span id="chatTitle">Выберите чат</span>
+</div>
+<div class="messages" id="messages"></div>
+<div class="input" id="chatInput" style="display:none">
+<input id="msgInput" placeholder="Сообщение...">
+<button id="sendBtn">➤</button>
+</div>
+</div>
+</div>
+
+<script type="module">
+
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-app.js";
+import { getDatabase, ref, get, set, push, onChildAdded, onValue, off, query, limitToLast } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-database.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyDxTZxpBF6ma0m3FLbxQhxD_xngu0Nm6OU",
+  authDomain: "fireguildnew-3356a.firebaseapp.com",
+  databaseURL: "https://fireguildnew-3356a-default-rtdb.firebaseio.com",
+  projectId: "fireguildnew-3356a",
+  storageBucket: "fireguildnew-3356a.firebasestorage.app",
+  messagingSenderId: "1020153656700",
+  appId: "1:1020153656700:web:9a39087a47b8c4138aa0f9"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getDatabase(app);
+
+let currentUser = null;
+let currentChat = null;
+let messagesListener = null;
+let currentMessagesRef = null;
+let chatListUnsubscribe = null;
+let isSending = false;
+let processedMessageIds = new Set();
+let isLoadingMessages = false; // Флаг загрузки сообщений
+let lastMessageTimestamp = 0; // Для дополнительной защиты от дублей
+
+// DOM elements
+const auth = document.getElementById('auth');
+const appDiv = document.getElementById('app');
+const loginBtn = document.getElementById('loginBtn');
+const registerBtn = document.getElementById('registerBtn');
+const logoutBtn = document.getElementById('logoutBtn');
+const loginUser = document.getElementById('loginUser');
+const loginPass = document.getElementById('loginPass');
+const myName = document.getElementById('myName');
+const myAvatar = document.getElementById('myAvatar');
+const chatList = document.getElementById('chatList');
+const chatTitle = document.getElementById('chatTitle');
+const messages = document.getElementById('messages');
+const chatInput = document.getElementById('chatInput');
+const msgInput = document.getElementById('msgInput');
+const sendBtn = document.getElementById('sendBtn');
+const menuToggle = document.getElementById('menuToggle');
+const sidebar = document.getElementById('sidebar');
+const backBtn = document.getElementById('backBtn');
+
+// Функция для установки cookie на 30 дней
+function setCookie(name, value, days) {
+  const date = new Date();
+  date.setTime(date.getTime() + (days * 24 * 60 * 60 * 1000));
+  const expires = "; expires=" + date.toUTCString();
+  document.cookie = name + "=" + (value || "") + expires + "; path=/; SameSite=Lax";
+}
+
+// Функция для получения cookie
+function getCookie(name) {
+  const nameEQ = name + "=";
+  const ca = document.cookie.split(';');
+  for(let i = 0; i < ca.length; i++) {
+    let c = ca[i];
+    while (c.charAt(0) == ' ') c = c.substring(1, c.length);
+    if (c.indexOf(nameEQ) == 0) return c.substring(nameEQ.length, c.length);
+  }
+  return null;
+}
+
+// Функция для удаления cookie
+function deleteCookie(name) {
+  document.cookie = name + '=; path=/; expires=Thu, 01 Jan 1970 00:00:00 UTC; SameSite=Lax';
+}
+
+// Mobile menu handlers
+menuToggle.addEventListener('click', () => sidebar.classList.toggle('active'));
+backBtn.addEventListener('click', closeChat);
+
+// Close sidebar when clicking outside
+document.addEventListener('click', (e) => {
+  if(window.innerWidth <= 768 && 
+     sidebar.classList.contains('active') && 
+     !sidebar.contains(e.target) && 
+     !menuToggle.contains(e.target)) {
+    sidebar.classList.remove('active');
+  }
+});
+
+// Регистрация
+registerBtn.onclick = async () => {
+  const u = loginUser.value.trim();
+  const p = loginPass.value.trim();
+  
+  if(!u || !p) {
+    alert('Введите логин и пароль');
+    return;
+  }
+
+  try {
+    const userRef = ref(db, `users/${u}`);
+    const snap = await get(userRef);
+    
+    if(snap.exists()) {
+      alert('Пользователь уже существует');
+      return;
+    }
+    
+    await set(userRef, {
+      password: p,
+      created: Date.now()
+    });
+    
+    alert('Регистрация успешна! Теперь войдите.');
+    
+  } catch(e) {
+    console.error('Registration error:', e);
+    alert('Ошибка регистрации: ' + e.message);
+  }
+};
+
+// Функция входа
+async function login(username, password) {
+  if(!username || !password) {
+    alert('Введите логин и пароль');
+    return false;
+  }
+
+  try {
+    console.log('Пытаемся войти как:', username);
+    const userRef = ref(db, `users/${username}`);
+    const snap = await get(userRef);
+    
+    if(!snap.exists()) {
+      alert('Пользователь не найден');
+      return false;
+    }
+    
+    if(snap.val().password !== password) {
+      alert('Неверный пароль');
+      return false;
+    }
+
+    currentUser = {username: username};
+    
+    // Сохраняем в cookie на 30 дней
+    setCookie('fireguild_user', username, 30);
+    setCookie('fireguild_pass', password, 30);
+    
+    // Показываем приложение
+    auth.style.display = 'none';
+    appDiv.style.display = 'flex';
+    myName.textContent = username;
+    myAvatar.textContent = username.charAt(0).toUpperCase();
+    
+    // Загружаем чаты
+    loadChats();
+    
+    return true;
+    
+  } catch(e) {
+    console.error('Login error:', e);
+    alert('Ошибка подключения: ' + e.message);
+    return false;
+  }
+}
+
+// Обработчик кнопки входа
+loginBtn.onclick = () => {
+  const u = loginUser.value.trim();
+  const p = loginPass.value;
+  login(u, p);
+};
+
+// Выход
+logoutBtn.onclick = () => {
+  // Очищаем слушатели
+  if(chatListUnsubscribe) {
+    chatListUnsubscribe();
+    chatListUnsubscribe = null;
+  }
+  if(currentMessagesRef && messagesListener) {
+    off(currentMessagesRef, 'child_added', messagesListener);
+    messagesListener = null;
+    currentMessagesRef = null;
+  }
+  
+  // Удаляем cookie
+  deleteCookie('fireguild_user');
+  deleteCookie('fireguild_pass');
+  
+  // Сбрасываем состояние
+  currentUser = null;
+  currentChat = null;
+  processedMessageIds.clear();
+  isLoadingMessages = false;
+  lastMessageTimestamp = 0;
+  
+  // Показываем экран входа
+  appDiv.style.display = 'none';
+  auth.style.display = 'flex';
+  
+  // Очищаем поля
+  messages.innerHTML = '';
+  chatList.innerHTML = '';
+  chatTitle.textContent = 'Выберите чат';
+  chatInput.style.display = 'none';
+  loginUser.value = '';
+  loginPass.value = '';
+};
+
+function loadChats() {
+  if(chatListUnsubscribe) {
+    chatListUnsubscribe();
+  }
+
+  const userChatsRef = ref(db, `users/${currentUser.username}/chats`);
+  
+  chatListUnsubscribe = onValue(userChatsRef, (snap) => {
+    console.log('Загружены чаты:', snap.val());
+    
+    // Сохраняем текущий активный чат
+    const currentChatId = currentChat?.id;
+    
+    chatList.innerHTML = '';
+    
+    if(!snap.exists()) {
+      chatList.innerHTML = '<div style="color:#8b98a5; text-align:center; padding:20px;">Нет чатов</div>';
+      return;
+    }
+
+    const chats = [];
+    snap.forEach(child => {
+      chats.push({
+        id: child.key,
+        ...child.val()
+      });
+    });
+
+    // Сортируем по времени последнего сообщения
+    chats.sort((a, b) => (b.lastMessageTime || 0) - (a.lastMessageTime || 0));
+
+    chats.forEach(chat => {
+      const div = document.createElement('div');
+      div.className = `chat-item ${currentChatId === chat.id ? 'active' : ''}`;
+      div.innerHTML = `
+        <span>${chat.with || 'Собеседник'}</span>
+        <p>${chat.lastMessage || 'Нет сообщений'}</p>
+      `;
+      div.onclick = () => {
+        openChat(chat.id, chat.with || 'Собеседник');
+        if(window.innerWidth <= 768) {
+          sidebar.classList.remove('active');
+        }
+      };
+      chatList.appendChild(div);
+    });
+  }, (error) => {
+    console.error('Ошибка загрузки чатов:', error);
+    chatList.innerHTML = '<div style="color:#ff6b6b; text-align:center; padding:20px;">Ошибка загрузки чатов</div>';
+  });
+}
+
+function openChat(chatId, friend) {
+  console.log('Открываем чат:', chatId, friend);
+  
+  // Если уже открыт этот же чат, ничего не делаем
+  if(currentChat?.id === chatId) {
+    return;
+  }
+  
+  // Очищаем предыдущий слушатель
+  if(currentMessagesRef && messagesListener) {
+    off(currentMessagesRef, 'child_added', messagesListener);
+    messagesListener = null;
+    currentMessagesRef = null;
+  }
+  
+  // Очищаем множество обработанных сообщений
+  processedMessageIds.clear();
+  isLoadingMessages = true;
+  lastMessageTimestamp = 0;
+
+  currentChat = {id: chatId, friend};
+  chatTitle.textContent = friend;
+  chatInput.style.display = 'flex';
+  messages.innerHTML = '<div style="color:#8b98a5; text-align:center; padding:20px;">Загрузка сообщений...</div>';
+
+  // Загружаем последние сообщения
+  const messagesRef = ref(db, `chats/${chatId}/messages`);
+  const messagesQuery = query(messagesRef, limitToLast(50));
+  
+  get(messagesQuery).then((snap) => {
+    messages.innerHTML = ''; // Очищаем сообщение о загрузке
+    
+    if(snap.exists()) {
+      const messages_array = [];
+      snap.forEach(child => {
+        messages_array.push({
+          id: child.key,
+          ...child.val()
+        });
+      });
+      
+      // Сортируем по времени
+      messages_array.sort((a, b) => a.timestamp - b.timestamp);
+      
+      // Добавляем все сообщения
+      messages_array.forEach(msg => {
+        processedMessageIds.add(msg.id);
+        if (msg.timestamp > lastMessageTimestamp) {
+          lastMessageTimestamp = msg.timestamp;
+        }
+        addMessageToChat(msg);
+      });
+      
+      messages.scrollTop = messages.scrollHeight;
+    }
+    
+    isLoadingMessages = false;
+    
+    // Устанавливаем слушатель только для новых сообщений
+    // Используем query с limitToLast(1) чтобы получать только новые
+    const newMessagesQuery = query(messagesRef, limitToLast(1));
+    
+    currentMessagesRef = newMessagesQuery;
+    
+    messagesListener = onChildAdded(newMessagesQuery, (snap) => {
+      // Игнорируем сообщения во время загрузки
+      if (isLoadingMessages) return;
+      
+      // Проверяем, не было ли уже это сообщение обработано
+      if (!processedMessageIds.has(snap.key)) {
+        const msg = snap.val();
+        
+        // Дополнительная проверка по времени для защиты от дублей
+        if (msg.timestamp > lastMessageTimestamp) {
+          console.log('Новое сообщение:', snap.key, msg);
+          processedMessageIds.add(snap.key);
+          lastMessageTimestamp = msg.timestamp;
+          addMessageToChat(msg);
+          messages.scrollTop = messages.scrollHeight;
+        }
+      }
+    });
+    
+  }).catch(error => {
+    console.error('Ошибка загрузки сообщений:', error);
+    messages.innerHTML = '<div style="color:#ff6b6b; text-align:center; padding:20px;">Ошибка загрузки сообщений</div>';
+    isLoadingMessages = false;
+  });
+}
+
+// Функция для добавления сообщения в чат
+function addMessageToChat(msg) {
+  // Проверяем, существует ли уже такое сообщение в DOM
+  const existingMessages = messages.querySelectorAll('.msg');
+  for (let existingMsg of existingMessages) {
+    const timeDiv = existingMsg.querySelector('.time');
+    if (timeDiv && timeDiv.textContent.includes(new Date(msg.timestamp).toLocaleTimeString('ru-RU', {hour: '2-digit', minute: '2-digit'}))) {
+      const msgText = existingMsg.childNodes[0]?.nodeValue?.trim();
+      if (msgText === msg.text) {
+        console.log('Сообщение уже есть в DOM, пропускаем');
+        return;
+      }
+    }
+  }
+  
+  const mine = msg.sender === currentUser.username;
+  
+  const div = document.createElement('div');
+  div.className = 'msg ' + (mine ? 'mine' : 'other');
+  div.setAttribute('data-message-id', msg.id || Date.now() + Math.random()); // Для отладки
+  div.innerHTML = `
+    ${escapeHtml(msg.text)}
+    <div class="time">
+      ${new Date(msg.timestamp).toLocaleTimeString('ru-RU', {hour: '2-digit', minute: '2-digit'})}
+    </div>
+  `;
+  messages.appendChild(div);
+}
+
+function closeChat() {
+  if(currentMessagesRef && messagesListener) {
+    off(currentMessagesRef, 'child_added', messagesListener);
+    messagesListener = null;
+    currentMessagesRef = null;
+  }
+  currentChat = null;
+  processedMessageIds.clear();
+  isLoadingMessages = false;
+  lastMessageTimestamp = 0;
+  chatTitle.textContent = 'Выберите чат';
+  chatInput.style.display = 'none';
+  messages.innerHTML = '';
+  
+  if(window.innerWidth <= 768) {
+    sidebar.classList.add('active');
+  }
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+sendBtn.onclick = sendMessage;
+msgInput.onkeypress = e => { if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } };
+
+async function sendMessage() {
+  const text = msgInput.value.trim();
+  if(!text || !currentChat || isSending) return;
+
+  // Блокируем повторную отправку
+  isSending = true;
+  sendBtn.disabled = true;
+
+  const message = {
+    text,
+    sender: currentUser.username,
+    timestamp: Date.now()
+  };
+
+  // Сохраняем текст для восстановления в случае ошибки
+  const originalText = text;
+  msgInput.value = '';
+
+  try {
+    // Сохраняем сообщение и получаем его ключ
+    const newMessageRef = await push(ref(db, `chats/${currentChat.id}/messages`), message);
+    
+    // Добавляем ключ в множество обработанных сообщений
+    processedMessageIds.add(newMessageRef.key);
+    if (message.timestamp > lastMessageTimestamp) {
+      lastMessageTimestamp = message.timestamp;
+    }
+    
+    // Обновляем последнее сообщение в списке чатов
+    await set(ref(db, `users/${currentUser.username}/chats/${currentChat.id}/lastMessage`), text);
+    await set(ref(db, `users/${currentUser.username}/chats/${currentChat.id}/lastMessageTime`), Date.now());
+    
+  } catch(e) {
+    console.error('Ошибка отправки:', e);
+    alert('Ошибка отправки');
+    msgInput.value = originalText;
+  } finally {
+    // Разблокируем отправку
+    isSending = false;
+    sendBtn.disabled = false;
+  }
+}
+
+// Автовход из cookie (30 дней)
+async function autoLogin() {
+  const savedUser = getCookie('fireguild_user');
+  const savedPass = getCookie('fireguild_pass');
+  
+  if(savedUser && savedPass) {
+    console.log('Пробуем автоматический вход для:', savedUser);
+    loginUser.value = savedUser;
+    loginPass.value = savedPass;
+    await login(savedUser, savedPass);
+  }
+}
+
+// Запускаем автовход после инициализации
+setTimeout(autoLogin, 1000);
+
+</script>
+</body>
+</html>
