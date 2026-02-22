@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FireGuild Admin</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+        }
+
+        body {
+            background: #0b1419;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .admin-container {
+            background: #1f2c34;
+            border-radius: 12px;
+            padding: 30px;
+            width: 100%;
+            max-width: 800px;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.5);
+        }
+
+        h1 {
+            color: #e9edef;
+            font-size: 24px;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .admin-password {
+            background: #2a3942;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        .admin-password input {
+            width: 100%;
+            padding: 12px;
+            background: #2d3f4a;
+            border: 1px solid #3b4a54;
+            border-radius: 6px;
+            color: #e9edef;
+            font-size: 14px;
+            margin-bottom: 10px;
+        }
+
+        .admin-password input:focus {
+            outline: none;
+            border-color: #00a884;
+        }
+
+        .admin-password button {
+            width: 100%;
+            padding: 12px;
+            background: #00a884;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .admin-password button:hover {
+            background: #008f6f;
+        }
+
+        .admin-content {
+            display: none;
+        }
+
+        .admin-content.visible {
+            display: block;
+        }
+
+        .stats {
+            background: #2a3942;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+            color: #e9edef;
+            font-size: 14px;
+        }
+
+        .users-list {
+            background: #2a3942;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .user-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 15px 20px;
+            border-bottom: 1px solid #3b4a54;
+            transition: background 0.2s;
+        }
+
+        .user-item:last-child {
+            border-bottom: none;
+        }
+
+        .user-item:hover {
+            background: #2d3f4a;
+        }
+
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .user-avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: #00a884;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            font-size: 18px;
+            color: white;
+        }
+
+        .user-details {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .user-name {
+            color: #e9edef;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .user-name.verified::after {
+            content: "✓";
+            color: #00a884;
+            font-weight: bold;
+        }
+
+        .user-created {
+            color: #8b98a5;
+            font-size: 12px;
+        }
+
+        .verify-btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .verify-btn.verify {
+            background: #00a884;
+            color: white;
+        }
+
+        .verify-btn.verify:hover {
+            background: #008f6f;
+        }
+
+        .verify-btn.unverify {
+            background: #f15e6c;
+            color: white;
+        }
+
+        .verify-btn.unverify:hover {
+            background: #d94a58;
+        }
+
+        .error-message {
+            background: #f15e6c;
+            color: white;
+            padding: 12px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        .error-message.visible {
+            display: block;
+        }
+
+        .success-message {
+            background: #00a884;
+            color: white;
+            padding: 12px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        .success-message.visible {
+            display: block;
+        }
+
+        .loading {
+            text-align: center;
+            color: #8b98a5;
+            padding: 40px;
+            font-size: 14px;
+        }
+
+        .back-link {
+            margin-top: 20px;
+            text-align: center;
+        }
+
+        .back-link a {
+            color: #00a884;
+            text-decoration: none;
+            font-size: 14px;
+        }
+
+        .back-link a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="admin-container">
+        <h1>🔥 FireGuild Admin Panel</h1>
+        
+        <div class="admin-password">
+            <input type="password" id="adminPassword" placeholder="Введите админ пароль" value="">
+            <button id="unlockAdmin">Войти в админку</button>
+        </div>
+
+        <div id="errorMessage" class="error-message"></div>
+        <div id="successMessage" class="success-message"></div>
+
+        <div id="adminContent" class="admin-content">
+            <div class="stats" id="stats">
+                Загрузка статистики...
+            </div>
+            <div class="users-list" id="usersList">
+                <div class="loading">Загрузка пользователей...</div>
+            </div>
+            <div class="back-link">
+                <a href="index.html">← Вернуться в чат</a>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-app.js";
+        import { getDatabase, ref, get, set, onValue } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-database.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyDxTZxpBF6ma0m3FLbxQhxD_xngu0Nm6OU",
+            authDomain: "fireguildnew-3356a.firebaseapp.com",
+            databaseURL: "https://fireguildnew-3356a-default-rtdb.firebaseio.com",
+            projectId: "fireguildnew-3356a",
+            storageBucket: "fireguildnew-3356a.firebasestorage.app",
+            messagingSenderId: "1020153656700",
+            appId: "1:1020153656700:web:9a39087a47b8c4138aa0f9"
+        };
+
+        const ADMIN_PASSWORD = "ForChurka9#3^337D-341Jdd%3dn::E83&&N?Cloud";
+        
+        const app = initializeApp(firebaseConfig);
+        const db = getDatabase(app);
+
+        const adminPassword = document.getElementById('adminPassword');
+        const unlockBtn = document.getElementById('unlockAdmin');
+        const adminContent = document.getElementById('adminContent');
+        const errorMessage = document.getElementById('errorMessage');
+        const successMessage = document.getElementById('successMessage');
+        const stats = document.getElementById('stats');
+        const usersList = document.getElementById('usersList');
+
+        // Проверка админ пароля
+        unlockBtn.addEventListener('click', () => {
+            if (adminPassword.value === ADMIN_PASSWORD) {
+                adminContent.classList.add('visible');
+                errorMessage.classList.remove('visible');
+                loadUsers();
+            } else {
+                showError('Неверный пароль');
+            }
+        });
+
+        // Загрузка пользователей
+        async function loadUsers() {
+            try {
+                const usersRef = ref(db, 'users');
+                onValue(usersRef, (snap) => {
+                    if (snap.exists()) {
+                        const users = [];
+                        snap.forEach(child => {
+                            users.push({
+                                username: child.key,
+                                ...child.val()
+                            });
+                        });
+
+                        // Сортировка по дате создания (новые сверху)
+                        users.sort((a, b) => (b.created || 0) - (a.created || 0));
+
+                        // Обновляем статистику
+                        const verifiedCount = users.filter(u => u.verified).length;
+                        stats.innerHTML = `Всего пользователей: ${users.length} | Верифицировано: ${verifiedCount}`;
+
+                        // Отображаем список
+                        displayUsers(users);
+                    } else {
+                        usersList.innerHTML = '<div style="padding: 20px; text-align: center; color: #8b98a5;">Пользователей нет</div>';
+                        stats.innerHTML = 'Всего пользователей: 0 | Верифицировано: 0';
+                    }
+                });
+            } catch (e) {
+                console.error('Error loading users:', e);
+                showError('Ошибка загрузки пользователей');
+            }
+        }
+
+        // Отображение пользователей
+        function displayUsers(users) {
+            usersList.innerHTML = '';
+            
+            users.forEach(user => {
+                const userDiv = document.createElement('div');
+                userDiv.className = 'user-item';
+                
+                const createdDate = user.created ? new Date(user.created).toLocaleString('ru-RU') : 'Неизвестно';
+                
+                userDiv.innerHTML = `
+                    <div class="user-info">
+                        <div class="user-avatar">${user.username.charAt(0).toUpperCase()}</div>
+                        <div class="user-details">
+                            <div class="user-name ${user.verified ? 'verified' : ''}">${user.username}</div>
+                            <div class="user-created">Зарегистрирован: ${createdDate}</div>
+                        </div>
+                    </div>
+                    <button class="verify-btn ${user.verified ? 'unverify' : 'verify'}" data-username="${user.username}">
+                        ${user.verified ? 'Снять галочку' : 'Выдать галочку'}
+                    </button>
+                `;
+
+                usersList.appendChild(userDiv);
+
+                // Добавляем обработчик для кнопки
+                const btn = userDiv.querySelector('.verify-btn');
+                btn.addEventListener('click', () => toggleVerification(user.username, user.verified));
+            });
+        }
+
+        // Переключение верификации
+        async function toggleVerification(username, currentStatus) {
+            try {
+                const userRef = ref(db, `users/${username}`);
+                
+                // Получаем текущие данные пользователя
+                const snap = await get(userRef);
+                if (snap.exists()) {
+                    const userData = snap.val();
+                    
+                    // Обновляем статус верификации
+                    await set(userRef, {
+                        ...userData,
+                        verified: !currentStatus
+                    });
+
+                    showSuccess(`Статус пользователя ${username} изменен`);
+                }
+            } catch (e) {
+                console.error('Error toggling verification:', e);
+                showError('Ошибка изменения статуса');
+            }
+        }
+
+        function showError(text) {
+            errorMessage.textContent = text;
+            errorMessage.classList.add('visible');
+            setTimeout(() => errorMessage.classList.remove('visible'), 3000);
+        }
+
+        function showSuccess(text) {
+            successMessage.textContent = text;
+            successMessage.classList.add('visible');
+            setTimeout(() => successMessage.classList.remove('visible'), 3000);
+        }
+
+        // Автоматическая проверка пароля из URL (опционально)
+        const urlParams = new URLSearchParams(window.location.search);
+        const passParam = urlParams.get('pass');
+        if (passParam === ADMIN_PASSWORD) {
+            adminPassword.value = passParam;
+            adminContent.classList.add('visible');
+            loadUsers();
+        }
+    </script>
+</body>
+</html>
