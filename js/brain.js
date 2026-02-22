@@ -462,7 +462,12 @@ function escapeHtml(text) {
 }
 
 sendBtn.onclick = sendMessage;
-msgInput.onkeypress = e => { if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } };
+msgInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+});
 
 async function sendMessage() {
   const text = msgInput.value.trim();
