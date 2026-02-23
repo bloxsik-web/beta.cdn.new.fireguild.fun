@@ -479,10 +479,15 @@ function escapeHtml(text) {
 }
 
 sendBtn.onclick = sendMessage;
-msgInput.onkeypress = e => { if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } };
+msgInput.addEventListener('keydown', (e) => {
+  if (!e.isComposing && e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+});
 
 async function sendMessage() {
-  const text = msgInput.value.trim();
+  const text = msgInput.textContent.trim();
   if(!text || !currentChat || isSending) return;
 
   // Блокируем повторную отправку
@@ -497,7 +502,7 @@ async function sendMessage() {
 
   // Сохраняем текст для восстановления в случае ошибки
   const originalText = text;
-  msgInput.value = '';
+  msgInput.textContent = '';
 
   try {
     // Сохраняем сообщение и получаем его ключ
@@ -518,7 +523,7 @@ async function sendMessage() {
   } catch(e) {
     console.error('Ошибка отправки:', e);
     alert('Ошибка отправки');
-    msgInput.value = originalText;
+    msgInput.textContent = originalText;
   } finally {
     // Разблокируем отправку
     isSending = false;
