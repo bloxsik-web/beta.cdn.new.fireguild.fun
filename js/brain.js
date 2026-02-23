@@ -1,6 +1,5 @@
-
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-app.js";
-import { getDatabase, ref, get, set, update, push, onChildAdded, onValue, off, query, limitToLast } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-database.js";
+import { getDatabase, ref, get, set, update, push, onChildAdded, onValue, off, onDisconnect, query, limitToLast } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-database.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyDxTZxpBF6ma0m3FLbxQhxD_xngu0Nm6OU",
@@ -26,6 +25,9 @@ let isLoadingMessages = false;
 let lastMessageTimestamp = 0;
 let userChatsRefGlobal = null;
 let chatListRenderGeneration = 0;
+let presenceStatusRef = null;
+let friendStatusRef = null;
+let friendStatusListenerAttached = false;
 const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
 
 // DOM elements
@@ -145,6 +147,40 @@ document.addEventListener('click', (e) => {
   }
 });
 
+async function setupPresence(username) {
+  try {
+    const statusRef = ref(db, `presence/${username}`);
+    presenceStatusRef = statusRef;
+
+    // Помечаем онлайн
+    await set(statusRef, {
+      online: true,
+      lastSeen: Date.now()
+    });
+
+    // Сервер автоматически отметит офлайн при разрыве соединения
+    try {
+      const disconn = onDisconnect(statusRef);
+      disconn.set({
+        online: false,
+        lastSeen: Date.now()
+      });
+    } catch (e) {
+      console.error('onDisconnect error:', e);
+    }
+
+    // На случай закрытия вкладки/приложения
+    window.addEventListener('beforeunload', () => {
+      set(statusRef, {
+        online: false,
+        lastSeen: Date.now()
+      });
+    }, { once: true });
+  } catch (e) {
+    console.error('setupPresence error:', e);
+  }
+}
+
 // Регистрация
 registerBtn.onclick = async () => {
   const u = loginUser.value.trim();
@@ -205,6 +241,9 @@ async function login(username, password) {
     // Сохраняем в cookie на 30 дней
     setCookie('fireguild_user', username, 30);
     setCookie('fireguild_pass', password, 30);
+
+    // Обновляем статус присутствия
+    await setupPresence(username);
     
     // Показываем приложение
     auth.style.display = 'none';
@@ -250,6 +289,15 @@ logoutBtn.onclick = () => {
   // Удаляем cookie
   deleteCookie('fireguild_user');
   deleteCookie('fireguild_pass');
+
+  // Отмечаем офлайн
+  if (presenceStatusRef) {
+    set(presenceStatusRef, {
+      online: false,
+      lastSeen: Date.now()
+    });
+    presenceStatusRef = null;
+  }
   
   // Сбрасываем состояние
   currentUser = null;
@@ -304,16 +352,33 @@ async function loadChats() {
 
     for (const chat of chats) {
       if (myGeneration !== chatListRenderGeneration) break;
+      const friend = chat.with || 'Собеседник';
+
+      // Имя + верификация
+      const displayData = await getDisplayNameWithBadge(friend);
+
+      // Статус онлайна собеседника
+      let online = false;
+      try {
+        const statusSnap = await get(ref(db, `presence/${friend}`));
+        online = statusSnap.exists() && !!statusSnap.val().online;
+      } catch (e) {
+        console.error('Ошибка получения статуса пользователя', friend, e);
+      }
+
+      if (myGeneration !== chatListRenderGeneration) break;
+
       const div = document.createElement('div');
       div.className = `chat-item ${currentChatId === chat.id ? 'active' : ''}`;
-      const displayData = await getDisplayNameWithBadge(chat.with || 'Собеседник');
-      if (myGeneration !== chatListRenderGeneration) break;
       div.innerHTML = `
-        <span>${displayData.html}</span>
+        <span class="chat-name-with-status">
+          <span class="status-dot ${online ? 'online' : 'offline'}"></span>
+          ${displayData.html}
+        </span>
         <p>${chat.lastMessage || 'Нет сообщений'}</p>
       `;
       div.onclick = () => {
-        openChat(chat.id, chat.with || 'Собеседник');
+        openChat(chat.id, friend);
         if(window.innerWidth <= 768) {
           sidebar.classList.remove('active');
         }
@@ -324,6 +389,15 @@ async function loadChats() {
     console.error('Ошибка загрузки чатов:', error);
     chatList.innerHTML = '<div style="color:#ff6b6b; text-align:center; padding:20px;">Ошибка загрузки чатов</div>';
   });
+}
+
+function renderChatHeader(friendDisplayData, online) {
+  const statusText = online ? 'В сети' : 'Не в сети';
+  const statusClass = online ? 'online' : 'offline';
+  chatTitle.innerHTML = `
+    <div class="chat-title-name">${friendDisplayData.html}</div>
+    <div class="chat-title-status ${statusClass}">${statusText}</div>
+  `;
 }
 
 async function openChat(chatId, friend) {
@@ -340,17 +414,32 @@ async function openChat(chatId, friend) {
     messagesListener = null;
     currentMessagesRef = null;
   }
+  if (friendStatusRef) {
+    off(friendStatusRef);
+    friendStatusRef = null;
+    friendStatusListenerAttached = false;
+  }
   
   // Очищаем множество обработанных сообщений
   processedMessageIds.clear();
   isLoadingMessages = true;
   lastMessageTimestamp = 0;
 
-  currentChat = {id: chatId, friend};
-  
-  // Обновляем заголовок с красивой галочкой
   const friendDisplayData = await getDisplayNameWithBadge(friend);
-  chatTitle.innerHTML = friendDisplayData.html;
+  currentChat = {id: chatId, friend, friendDisplayData};
+  
+  // Заголовок с красивой галочкой и статусом
+  renderChatHeader(friendDisplayData, false);
+
+  // Слушаем статус присутствия собеседника
+  friendStatusRef = ref(db, `presence/${friend}`);
+  onValue(friendStatusRef, (snap) => {
+    const val = snap.val();
+    const online = !!(val && val.online);
+    if (currentChat && currentChat.friend === friend) {
+      renderChatHeader(currentChat.friendDisplayData || friendDisplayData, online);
+    }
+  });
   
   chatInput.style.display = 'flex';
   messages.innerHTML = '<div style="color:#8b98a5; text-align:center; padding:20px;">Загрузка сообщений...</div>';
@@ -399,7 +488,7 @@ async function openChat(chatId, friend) {
       
       // Проверяем, не было ли уже это сообщение обработано
       if (!processedMessageIds.has(snap.key)) {
-        const msg = snap.val();
+        const msg = { id: snap.key, ...snap.val() };
         
         // Дополнительная проверка по времени для защиты от дублей
         if (msg.timestamp > lastMessageTimestamp) {
@@ -435,6 +524,9 @@ async function addMessageToChat(msg) {
   }
   
   const mine = msg.sender === currentUser.username;
+  const friendUsername = currentChat?.friend;
+  const readBy = msg.readBy || {};
+  const readByFriend = mine && friendUsername ? !!readBy[friendUsername] : false;
   
   const div = document.createElement('div');
   div.className = 'msg ' + (mine ? 'mine' : 'other');
@@ -447,10 +539,20 @@ async function addMessageToChat(msg) {
     <div class="sender-name">${senderDisplayData.html}</div>
     ${escapeHtml(msg.text)}
     <div class="time">
-      ${new Date(msg.timestamp).toLocaleTimeString('ru-RU', {hour: '2-digit', minute: '2-digit'})}
+      <span class="time-text">${new Date(msg.timestamp).toLocaleTimeString('ru-RU', {hour: '2-digit', minute: '2-digit'})}</span>
+      ${mine ? `<span class="msg-status ${readByFriend ? 'read' : 'sent'}">${readByFriend ? '✔✔' : '✔'}</span>` : ''}
     </div>
   `;
   messages.appendChild(div);
+
+  // Помечаем входящее сообщение как прочитанное
+  if (!mine && currentChat && msg.id) {
+    try {
+      await set(ref(db, `chats/${currentChat.id}/messages/${msg.id}/readBy/${currentUser.username}`), true);
+    } catch (e) {
+      console.error('Не удалось отметить сообщение прочитанным', e);
+    }
+  }
 }
 
 function closeChat() {
