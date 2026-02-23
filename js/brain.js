@@ -1,3 +1,4 @@
+
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-app.js";
 import { getDatabase, ref, get, set, update, push, onChildAdded, onValue, off, query, limitToLast } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-database.js";
 
@@ -25,6 +26,7 @@ let isLoadingMessages = false;
 let lastMessageTimestamp = 0;
 let userChatsRefGlobal = null;
 let chatListRenderGeneration = 0;
+const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
 
 // DOM elements
 const auth = document.getElementById('auth');
@@ -45,6 +47,21 @@ const sendBtn = document.getElementById('sendBtn');
 const menuToggle = document.getElementById('menuToggle');
 const sidebar = document.getElementById('sidebar');
 const backBtn = document.getElementById('backBtn');
+
+// На некоторых мобильных браузерах первый фокус в поле может странно инициализировать раскладку.
+// Делаем один «перефокус», чтобы привести клавиатуру в нормальное состояние для русского ввода.
+if (isMobile && msgInput) {
+  let msgInputFixApplied = false;
+  msgInput.addEventListener('focus', () => {
+    if (msgInputFixApplied) return;
+    msgInputFixApplied = true;
+    msgInput.setAttribute('lang', 'ru');
+    setTimeout(() => {
+      msgInput.blur();
+      setTimeout(() => msgInput.focus(), 0);
+    }, 0);
+  });
+}
 
 // Функция для установки cookie
 function setCookie(name, value, days) {
