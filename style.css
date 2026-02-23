@@ -225,6 +225,28 @@ font-weight:500;
 font-size:15px;
 }
 
+.chat-name-with-status{
+display:inline-flex;
+align-items:center;
+gap:6px;
+}
+
+.status-dot{
+width:8px;
+height:8px;
+border-radius:50%;
+background:#555;
+box-shadow:0 0 0 2px rgba(0,0,0,0.4);
+}
+
+.status-dot.online{
+background:#3dd17b;
+}
+
+.status-dot.offline{
+background:#777;
+}
+
 .chat-item p{
 color:var(--text-secondary);
 font-size:13px;
@@ -252,6 +274,45 @@ font-size:16px;
 display:flex;
 align-items:center;
 gap:12px;
+}
+
+#chatTitle{
+display:flex;
+flex-direction:column;
+gap:2px;
+}
+
+.chat-title-name{
+font-weight:600;
+font-size:16px;
+display:flex;
+align-items:center;
+gap:4px;
+}
+
+.chat-title-status{
+font-size:12px;
+color:var(--text-secondary);
+display:flex;
+align-items:center;
+gap:4px;
+}
+
+.chat-title-status.online::before,
+.chat-title-status.offline::before{
+content:"";
+width:8px;
+height:8px;
+border-radius:50%;
+background:#777;
+}
+
+.chat-title-status.online::before{
+background:#3dd17b;
+}
+
+.chat-title-status.offline::before{
+background:#777;
 }
 
 .back-btn{
@@ -302,6 +363,22 @@ font-size:11px;
 opacity:.6;
 margin-top:6px;
 text-align:right;
+}
+
+.time-text{
+margin-right:4px;
+}
+
+.msg-status{
+font-size:11px;
+}
+
+.msg-status.sent{
+color:rgba(255,255,255,0.7);
+}
+
+.msg-status.read{
+color:#3dd17b;
 }
 
 /* ===================== INPUT ===================== */
