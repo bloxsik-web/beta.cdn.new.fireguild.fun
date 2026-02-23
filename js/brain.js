@@ -124,12 +124,6 @@ async function updateUserDisplay() {
     if (currentUser) {
         const displayData = await getDisplayNameWithBadge(currentUser.username);
         myName.innerHTML = displayData.html;
-        
-        // Обновляем заголовок чата если он открыт
-        if (currentChat) {
-            const friendDisplayData = await getDisplayNameWithBadge(currentChat.friend);
-            chatTitle.innerHTML = friendDisplayData.html;
-        }
     }
 }
 
