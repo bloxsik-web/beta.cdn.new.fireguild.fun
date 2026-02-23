@@ -1,6 +1,5 @@
-
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-app.js";
-import { getDatabase, ref, get, set, push, onChildAdded, onValue, off, query, limitToLast } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-database.js";
+import { getDatabase, ref, get, set, update, push, onChildAdded, onValue, off, query, limitToLast } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-database.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyDxTZxpBF6ma0m3FLbxQhxD_xngu0Nm6OU",
@@ -24,6 +23,8 @@ let isSending = false;
 let processedMessageIds = new Set();
 let isLoadingMessages = false;
 let lastMessageTimestamp = 0;
+let userChatsRefGlobal = null;
+let chatListRenderGeneration = 0;
 
 // DOM elements
 const auth = document.getElementById('auth');
@@ -254,25 +255,24 @@ logoutBtn.onclick = () => {
 };
 
 async function loadChats() {
-  if(chatListUnsubscribe) {
-    chatListUnsubscribe();
+  console.log("LOAD CHATS CALLED");
+  if(userChatsRefGlobal) {
+    off(userChatsRefGlobal);
   }
 
   const userChatsRef = ref(db, `users/${currentUser.username}/chats`);
-  
-  chatListUnsubscribe = onValue(userChatsRef, async (snap) => {
-    console.log('Загружены чаты:', snap.val());
-    
-    // Сохраняем текущий активный чат
-    const currentChatId = currentChat?.id;
-    
-    chatList.innerHTML = '';
-    
+  userChatsRefGlobal = userChatsRef;
+
+  onValue(userChatsRef, async (snap) => {
+    const myGeneration = ++chatListRenderGeneration;
+
     if(!snap.exists()) {
+      if (myGeneration !== chatListRenderGeneration) return;
       chatList.innerHTML = '<div style="color:#8b98a5; text-align:center; padding:20px;">Нет чатов</div>';
       return;
     }
 
+    const currentChatId = currentChat?.id;
     const chats = [];
     snap.forEach(child => {
       chats.push({
@@ -280,17 +280,17 @@ async function loadChats() {
         ...child.val()
       });
     });
-
-    // Сортируем по времени последнего сообщения
     chats.sort((a, b) => (b.lastMessageTime || 0) - (a.lastMessageTime || 0));
 
-    // Создаем элементы чатов с красивой галочкой
+    if (myGeneration !== chatListRenderGeneration) return;
+    chatList.innerHTML = '';
+
     for (const chat of chats) {
+      if (myGeneration !== chatListRenderGeneration) break;
       const div = document.createElement('div');
       div.className = `chat-item ${currentChatId === chat.id ? 'active' : ''}`;
-      
       const displayData = await getDisplayNameWithBadge(chat.with || 'Собеседник');
-      
+      if (myGeneration !== chatListRenderGeneration) break;
       div.innerHTML = `
         <span>${displayData.html}</span>
         <p>${chat.lastMessage || 'Нет сообщений'}</p>
@@ -462,12 +462,7 @@ function escapeHtml(text) {
 }
 
 sendBtn.onclick = sendMessage;
-msgInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault();
-    sendMessage();
-  }
-});
+msgInput.onkeypress = e => { if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } };
 
 async function sendMessage() {
   const text = msgInput.value.trim();
@@ -497,9 +492,11 @@ async function sendMessage() {
       lastMessageTimestamp = message.timestamp;
     }
     
-    // Обновляем последнее сообщение в списке чатов
-    await set(ref(db, `users/${currentUser.username}/chats/${currentChat.id}/lastMessage`), text);
-    await set(ref(db, `users/${currentUser.username}/chats/${currentChat.id}/lastMessageTime`), Date.now());
+    // Обновляем последнее сообщение в списке чатов одним запросом, чтобы не вызывать onValue дважды и не дублировать чаты
+    await update(ref(db, `users/${currentUser.username}/chats/${currentChat.id}`), {
+      lastMessage: text,
+      lastMessageTime: Date.now()
+    });
     
   } catch(e) {
     console.error('Ошибка отправки:', e);
@@ -524,6 +521,36 @@ async function autoLogin() {
     await login(savedUser, savedPass);
   }
 }
+
+// === Console command: get.token (без скобок, с подтверждением) ===
+Object.defineProperty(window, 'get', {
+  value: {},
+  writable: false
+});
+
+Object.defineProperty(window.get, 'token', {
+  get() {
+    const confirmGet = confirm('Точно ли вы хотите получить токен?');
+
+    if (!confirmGet) {
+      console.log('Получение токена отменено');
+      return null;
+    }
+
+    const user = getCookie('fireguild_user');
+    const pass = getCookie('fireguild_pass');
+
+    if (!user || !pass) {
+      console.log('Куки не найдены');
+      return null;
+    }
+
+    const token = `${user}:${pass}`;
+    console.log(token);
+    return token;
+  }
+});
+
 backBtn.onclick = closeChat;
 // Запускаем автовход после инициализации
-setTimeout(autoLogin, 1000);
+setTimeout(autoLogin, 0);
