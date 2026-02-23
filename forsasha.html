@@ -190,6 +190,31 @@
             background: #d94a58;
         }
 
+        .user-actions {
+            display: flex;
+            gap: 10px;
+        }
+
+        .ban-btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            background: #f15e6c;
+            color: white;
+        }
+
+        .ban-btn.unban {
+            background: #4a5568;
+        }
+
+        .ban-btn:hover {
+            filter: brightness(1.05);
+        }
+
         .error-message {
             background: #f15e6c;
             color: white;
@@ -278,7 +303,7 @@
             appId: "1:1020153656700:web:9a39087a47b8c4138aa0f9"
         };
 
-        const ADMIN_PASSWORD = "ForChurka9#3^337D-341Jdd%3dn::E83&&N?Cloud";
+        const ADMIN_PASSWORD_HASH = "a18ab77855608af7d6a8263051434a9f4a8f5275b29d546ca8014aa8cfaeb1d6";
         
         const app = initializeApp(firebaseConfig);
         const db = getDatabase(app);
@@ -291,9 +316,18 @@
         const stats = document.getElementById('stats');
         const usersList = document.getElementById('usersList');
 
-        // Проверка админ пароля
-        unlockBtn.addEventListener('click', () => {
-            if (adminPassword.value === ADMIN_PASSWORD) {
+        async function hashPassword(str) {
+            const enc = new TextEncoder();
+            const data = enc.encode(str);
+            const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+            const hashArray = Array.from(new Uint8Array(hashBuffer));
+            return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+        }
+
+        // Проверка админ пароля (по хэшу)
+        unlockBtn.addEventListener('click', async () => {
+            const hash = await hashPassword(adminPassword.value || '');
+            if (hash === ADMIN_PASSWORD_HASH) {
                 adminContent.classList.add('visible');
                 errorMessage.classList.remove('visible');
                 loadUsers();
@@ -321,7 +355,8 @@
 
                         // Обновляем статистику
                         const verifiedCount = users.filter(u => u.verified).length;
-                        stats.innerHTML = `Всего пользователей: ${users.length} | Верифицировано: ${verifiedCount}`;
+                        const bannedCount = users.filter(u => u.banned).length;
+                        stats.innerHTML = `Всего пользователей: ${users.length} | Верифицировано: ${verifiedCount} | Заблокировано: ${bannedCount}`;
 
                         // Отображаем список
                         displayUsers(users);
@@ -354,16 +389,24 @@
                             <div class="user-created">Зарегистрирован: ${createdDate}</div>
                         </div>
                     </div>
-                    <button class="verify-btn ${user.verified ? 'unverify' : 'verify'}" data-username="${user.username}">
-                        ${user.verified ? 'Снять галочку' : 'Выдать галочку'}
-                    </button>
+                    <div class="user-actions">
+                        <button class="verify-btn ${user.verified ? 'unverify' : 'verify'}" data-username="${user.username}">
+                            ${user.verified ? 'Снять галочку' : 'Выдать галочку'}
+                        </button>
+                        <button class="ban-btn ${user.banned ? 'unban' : 'ban'}" data-username="${user.username}">
+                            ${user.banned ? 'Разблокировать' : 'Заблокировать'}
+                        </button>
+                    </div>
                 `;
 
                 usersList.appendChild(userDiv);
 
-                // Добавляем обработчик для кнопки
-                const btn = userDiv.querySelector('.verify-btn');
-                btn.addEventListener('click', () => toggleVerification(user.username, user.verified));
+                // Добавляем обработчики для кнопок
+                const verifyBtn = userDiv.querySelector('.verify-btn');
+                verifyBtn.addEventListener('click', () => toggleVerification(user.username, !!user.verified));
+
+                const banBtn = userDiv.querySelector('.ban-btn');
+                banBtn.addEventListener('click', () => toggleBan(user.username, !!user.banned));
             });
         }
 
@@ -391,6 +434,28 @@
             }
         }
 
+        // Блокировка / разблокировка пользователя
+        async function toggleBan(username, currentStatus) {
+            try {
+                const userRef = ref(db, `users/${username}`);
+                const snap = await get(userRef);
+
+                if (snap.exists()) {
+                    const userData = snap.val();
+
+                    await set(userRef, {
+                        ...userData,
+                        banned: !currentStatus
+                    });
+
+                    showSuccess(`Пользователь ${username} ${currentStatus ? 'разблокирован' : 'заблокирован'}`);
+                }
+            } catch (e) {
+                console.error('Error toggling ban:', e);
+                showError('Ошибка изменения блокировки пользователя');
+            }
+        }
+
         function showError(text) {
             errorMessage.textContent = text;
             errorMessage.classList.add('visible');
@@ -403,14 +468,23 @@
             setTimeout(() => successMessage.classList.remove('visible'), 3000);
         }
 
-        // Автоматическая проверка пароля из URL (опционально)
-        const urlParams = new URLSearchParams(window.location.search);
-        const passParam = urlParams.get('pass');
-        if (passParam === ADMIN_PASSWORD) {
-            adminPassword.value = passParam;
-            adminContent.classList.add('visible');
-            loadUsers();
-        }
+        // Автоматическая проверка пароля из URL (опционально, тоже по хэшу)
+        (async () => {
+            const urlParams = new URLSearchParams(window.location.search);
+            const passParam = urlParams.get('pass');
+            if (!passParam) return;
+
+            try {
+                const hash = await hashPassword(passParam);
+                if (hash === ADMIN_PASSWORD_HASH) {
+                    adminPassword.value = passParam;
+                    adminContent.classList.add('visible');
+                    loadUsers();
+                }
+            } catch (e) {
+                console.error('URL admin pass check error:', e);
+            }
+        })();
     </script>
 </body>
 </html>
