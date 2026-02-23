@@ -28,6 +28,8 @@ let chatListRenderGeneration = 0;
 let presenceStatusRef = null;
 let friendStatusRef = null;
 let friendStatusListenerAttached = false;
+let readStatusRef = null;
+let readStatusListener = null;
 const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
 
 // DOM elements
@@ -49,6 +51,8 @@ const sendBtn = document.getElementById('sendBtn');
 const menuToggle = document.getElementById('menuToggle');
 const sidebar = document.getElementById('sidebar');
 const backBtn = document.getElementById('backBtn');
+const userSearchInput = document.getElementById('userSearchInput');
+const userSearchBtn = document.getElementById('userSearchBtn');
 
 // На некоторых мобильных браузерах первый фокус в поле может странно инициализировать раскладку.
 // Делаем один «перефокус», чтобы привести клавиатуру в нормальное состояние для русского ввода.
@@ -131,6 +135,33 @@ async function updateUserDisplay() {
 menuToggle.addEventListener('click', () => sidebar.classList.toggle('active'));
 backBtn.addEventListener('click', closeChat);
 
+if (userSearchBtn && userSearchInput) {
+  userSearchBtn.addEventListener('click', async () => {
+    const res = await findOrCreateChatWithUser(userSearchInput.value);
+    if (res) {
+      userSearchInput.value = res.friend;
+      openChat(res.id, res.friend);
+      if(window.innerWidth <= 768) {
+        sidebar.classList.remove('active');
+      }
+    }
+  });
+
+  userSearchInput.addEventListener('keydown', async (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const res = await findOrCreateChatWithUser(userSearchInput.value);
+      if (res) {
+        userSearchInput.blur();
+        openChat(res.id, res.friend);
+        if(window.innerWidth <= 768) {
+          sidebar.classList.remove('active');
+        }
+      }
+    }
+  });
+}
+
 // Close sidebar when clicking outside
 document.addEventListener('click', (e) => {
   if(window.innerWidth <= 768 && 
@@ -173,6 +204,11 @@ async function setupPresence(username) {
   } catch (e) {
     console.error('setupPresence error:', e);
   }
+}
+
+// Получить ID чата для пары пользователей (детерминированный)
+function getChatIdForUsers(userA, userB) {
+  return [userA, userB].sort().join('_');
 }
 
 // Регистрация
@@ -227,6 +263,11 @@ async function login(username, password) {
     
     if(snap.val().password !== password) {
       alert('Неверный пароль');
+      return false;
+    }
+
+    if (snap.val().banned) {
+      alert('Этот аккаунт заблокирован администрацией');
       return false;
     }
 
@@ -385,6 +426,79 @@ async function loadChats() {
   });
 }
 
+async function findOrCreateChatWithUser(friendUsername) {
+  const target = (friendUsername || '').trim();
+  if (!target) {
+    alert('Введите ник пользователя');
+    return null;
+  }
+  if (!currentUser) {
+    alert('Сначала войдите в аккаунт');
+    return null;
+  }
+  if (target === currentUser.username) {
+    alert('Нельзя писать самому себе');
+    return null;
+  }
+
+  try {
+    // Проверяем, существует ли такой пользователь и не заблокирован ли он
+    const userRef = ref(db, `users/${target}`);
+    const userSnap = await get(userRef);
+    if (!userSnap.exists()) {
+      alert('Пользователь не найден');
+      return null;
+    }
+    if (userSnap.val().banned) {
+      alert('Этот пользователь заблокирован администрацией');
+      return null;
+    }
+
+    // Ищем уже существующий чат с этим пользователем
+    const userChatsRef = ref(db, `users/${currentUser.username}/chats`);
+    const chatsSnap = await get(userChatsRef);
+    let existingChatId = null;
+    if (chatsSnap.exists()) {
+      chatsSnap.forEach(child => {
+        const val = child.val();
+        if (val && val.with === target) {
+          existingChatId = child.key;
+        }
+      });
+    }
+
+    if (existingChatId) {
+      return { id: existingChatId, friend: target };
+    }
+
+    // Создаем новый чат с детерминированным ID
+    const chatId = getChatIdForUsers(currentUser.username, target);
+    const now = Date.now();
+
+    const currentUserChatRef = ref(db, `users/${currentUser.username}/chats/${chatId}`);
+    const friendChatRef = ref(db, `users/${target}/chats/${chatId}`);
+
+    await Promise.all([
+      set(currentUserChatRef, {
+        with: target,
+        lastMessage: '',
+        lastMessageTime: now
+      }),
+      set(friendChatRef, {
+        with: currentUser.username,
+        lastMessage: '',
+        lastMessageTime: now
+      })
+    ]);
+
+    return { id: chatId, friend: target };
+  } catch (e) {
+    console.error('Ошибка при поиске/создании чата:', e);
+    alert('Ошибка при поиске пользователя');
+    return null;
+  }
+}
+
 function renderChatHeader(friendDisplayData, online) {
   const statusText = online ? 'В сети' : 'Не в сети';
   const statusClass = online ? 'online' : 'offline';
@@ -412,6 +526,11 @@ async function openChat(chatId, friend) {
     off(friendStatusRef);
     friendStatusRef = null;
     friendStatusListenerAttached = false;
+  }
+  if (readStatusRef && readStatusListener) {
+    off(readStatusRef, 'value', readStatusListener);
+    readStatusRef = null;
+    readStatusListener = null;
   }
   
   // Очищаем множество обработанных сообщений
@@ -494,6 +613,34 @@ async function openChat(chatId, friend) {
         }
       }
     });
+
+    // Слушатель изменений для обновления статуса прочтения (галочки)
+    readStatusRef = messagesQuery;
+    readStatusListener = onValue(readStatusRef, (snap) => {
+      if (!currentChat || currentChat.id !== chatId) return;
+      if (!snap.exists()) return;
+
+      const friendUsername = currentChat.friend;
+      if (!friendUsername) return;
+
+      snap.forEach(child => {
+        const msg = { id: child.key, ...child.val() };
+        if (msg.sender !== currentUser.username) return;
+
+        const readBy = msg.readBy || {};
+        const readByFriend = !!readBy[friendUsername];
+
+        const msgDiv = messages.querySelector(`.msg[data-message-id="${msg.id}"]`);
+        if (!msgDiv) return;
+
+        const statusSpan = msgDiv.querySelector('.msg-status');
+        if (!statusSpan) return;
+
+        statusSpan.textContent = readByFriend ? '✔✔' : '✔';
+        statusSpan.classList.toggle('read', readByFriend);
+        statusSpan.classList.toggle('sent', !readByFriend);
+      });
+    });
     
   }).catch(error => {
     console.error('Ошибка загрузки сообщений:', error);
@@ -555,6 +702,15 @@ function closeChat() {
     messagesListener = null;
     currentMessagesRef = null;
   }
+  if (friendStatusRef) {
+    off(friendStatusRef);
+    friendStatusRef = null;
+  }
+  if (readStatusRef && readStatusListener) {
+    off(readStatusRef, 'value', readStatusListener);
+    readStatusRef = null;
+    readStatusListener = null;
+  }
   currentChat = null;
   processedMessageIds.clear();
   isLoadingMessages = false;
@@ -610,11 +766,27 @@ async function sendMessage() {
       lastMessageTimestamp = message.timestamp;
     }
     
-    // Обновляем последнее сообщение в списке чатов одним запросом, чтобы не вызывать onValue дважды и не дублировать чаты
-    await update(ref(db, `users/${currentUser.username}/chats/${currentChat.id}`), {
-      lastMessage: text,
-      lastMessageTime: Date.now()
-    });
+    // Обновляем последнее сообщение в списке чатов для обоих пользователей
+    const now = Date.now();
+    const updates = [
+      update(ref(db, `users/${currentUser.username}/chats/${currentChat.id}`), {
+        with: currentChat.friend,
+        lastMessage: text,
+        lastMessageTime: now
+      })
+    ];
+
+    if (currentChat.friend) {
+      updates.push(
+        update(ref(db, `users/${currentChat.friend}/chats/${currentChat.id}`), {
+          with: currentUser.username,
+          lastMessage: text,
+          lastMessageTime: now
+        })
+      );
+    }
+
+    await Promise.all(updates);
     
   } catch(e) {
     console.error('Ошибка отправки:', e);
