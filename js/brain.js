@@ -32,6 +32,109 @@ let readStatusRef = null;
 let readStatusListener = null;
 const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
 
+// ===== Desktop notifications + sound (TAB OPEN / SITE RUNNING) =====
+const NOTIF_ASKED_KEY = 'fireguild_notif_asked_v1';
+let notifSound = null;
+let chatListInitialLoadDone = false;
+let lastNotifiedChatTime = Object.create(null); // { [chatId]: lastMessageTime }
+let lastNotifiedChatText = Object.create(null); // { [chatId]: lastMessage }
+let lastNotifiedChatSender = Object.create(null); // { [chatId]: with }
+let lastNotifiedAt = 0;
+
+function initNotificationSound() {
+  try {
+    notifSound = new Audio('assets/new.mp3');
+    notifSound.preload = 'auto';
+    notifSound.volume = 1.0;
+  } catch (e) {
+    console.error('Failed to init notification sound:', e);
+    notifSound = null;
+  }
+}
+
+function playNotificationSound() {
+  if (!notifSound) return;
+  try {
+    notifSound.currentTime = 0;
+    const p = notifSound.play();
+    if (p && typeof p.catch === 'function') {
+      p.catch(() => {
+        // Autoplay policy may block until user interaction
+      });
+    }
+  } catch (e) {
+    // ignore
+  }
+}
+
+function canShowDesktopNotifications() {
+  return ("Notification" in window) && Notification.permission === 'granted';
+}
+
+function showDesktopNotification(title, body) {
+  if (!("Notification" in window)) return;
+  if (Notification.permission !== 'granted') return;
+
+  try {
+    const n = new Notification(title, { body: body || '' });
+    n.onclick = () => {
+      try { window.focus(); } catch (e) {}
+      try { n.close(); } catch (e) {}
+    };
+    // auto close
+    setTimeout(() => {
+      try { n.close(); } catch (e) {}
+    }, 7000);
+  } catch (e) {
+    console.error('Notification error:', e);
+  }
+}
+
+async function maybeRequestNotificationPermission(options = { force: false }) {
+  if (!("Notification" in window)) return false;
+
+  // already granted/denied
+  if (Notification.permission === 'granted') return true;
+  if (Notification.permission === 'denied') return false;
+
+  // avoid repeated prompts
+  const asked = localStorage.getItem(NOTIF_ASKED_KEY);
+  if (asked && !options.force) return false;
+
+  localStorage.setItem(NOTIF_ASKED_KEY, '1');
+
+  try {
+    const res = await Notification.requestPermission();
+    return res === 'granted';
+  } catch (e) {
+    console.error('Notification permission request error:', e);
+    return false;
+  }
+}
+
+// throttle notifications a bit (avoid spam)
+function shouldNotifyNow() {
+  const now = Date.now();
+  if (now - lastNotifiedAt < 900) return false;
+  lastNotifiedAt = now;
+  return true;
+}
+
+// Decide whether to show notification (if tab is not focused or user is not in that chat)
+function shouldShowNotificationForChat(chatId) {
+  const focused = (typeof document.hasFocus === 'function') ? document.hasFocus() : !document.hidden;
+  const isCurrentChat = currentChat && currentChat.id === chatId;
+
+  // If you're in the same chat AND page focused => don't show desktop popup, but still can play sound (optional)
+  if (isCurrentChat && focused && !document.hidden) return false;
+
+  // Otherwise show if permission granted and not too frequent
+  return canShowDesktopNotifications() && shouldNotifyNow();
+}
+
+// init sound early
+initNotificationSound();
+
 // DOM elements
 const auth = document.getElementById('auth');
 const appDiv = document.getElementById('app');
@@ -245,7 +348,7 @@ registerBtn.onclick = async () => {
 };
 
 // Функция входа
-async function login(username, password) {
+async function login(username, password, isAuto = false) {
   if(!username || !password) {
     alert('Введите логин и пароль');
     return false;
@@ -289,6 +392,16 @@ async function login(username, password) {
     
     myAvatar.textContent = username.charAt(0).toUpperCase();
     
+    // ВАЖНО: запрос разрешения на уведомления — только при ручном входе (не при autoLogin),
+    // чтобы не терять ввод/промпты и не ловить блокировку браузера на авто-gesture.
+    if (!isAuto) {
+      try {
+        await maybeRequestNotificationPermission();
+      } catch (e) {
+        console.error('maybeRequestNotificationPermission error:', e);
+      }
+    }
+    
     // Загружаем чаты
     loadChats();
     
@@ -305,7 +418,7 @@ async function login(username, password) {
 loginBtn.onclick = () => {
   const u = loginUser.value.trim();
   const p = loginPass.value;
-  login(u, p);
+  login(u, p, false);
 };
 
 // Выход
@@ -340,6 +453,13 @@ logoutBtn.onclick = () => {
   processedMessageIds.clear();
   isLoadingMessages = false;
   lastMessageTimestamp = 0;
+
+  // reset notif tracking for this session
+  chatListInitialLoadDone = false;
+  lastNotifiedChatTime = Object.create(null);
+  lastNotifiedChatText = Object.create(null);
+  lastNotifiedChatSender = Object.create(null);
+  lastNotifiedAt = 0;
   
   // Показываем экран входа
   appDiv.style.display = 'none';
@@ -369,6 +489,7 @@ async function loadChats() {
     if(!snap.exists()) {
       if (myGeneration !== chatListRenderGeneration) return;
       chatList.innerHTML = '<div style="color:#8b98a5; text-align:center; padding:20px;">Нет чатов</div>';
+      chatListInitialLoadDone = true;
       return;
     }
 
@@ -381,6 +502,61 @@ async function loadChats() {
       });
     });
     chats.sort((a, b) => (b.lastMessageTime || 0) - (a.lastMessageTime || 0));
+
+    // ===== GLOBAL NEW MESSAGE NOTIFICATIONS (TAB OPEN) =====
+    // We notify based on users/{me}/chats updates (works for ANY chat, even if not opened).
+    // On first load: fill the cache, do not notify.
+    if (!chatListInitialLoadDone) {
+      for (const chat of chats) {
+        lastNotifiedChatTime[chat.id] = chat.lastMessageTime || 0;
+        lastNotifiedChatText[chat.id] = chat.lastMessage || '';
+        lastNotifiedChatSender[chat.id] = chat.with || '';
+      }
+      chatListInitialLoadDone = true;
+    } else {
+      for (const chat of chats) {
+        const prevTime = lastNotifiedChatTime[chat.id] || 0;
+        const newTime = chat.lastMessageTime || 0;
+
+        // message updated
+        if (newTime > prevTime && chat.lastMessage && chat.with) {
+          const prevText = lastNotifiedChatText[chat.id] || '';
+          const newText = chat.lastMessage || '';
+          const prevWith = lastNotifiedChatSender[chat.id] || '';
+          const newWith = chat.with || '';
+
+          // Avoid notifying for your own outgoing messages:
+          // In your schema `with` is friend username, so outgoing messages still update your own chats with same friend.
+          // So we need an extra heuristic:
+          // - If you're currently in that chat and focused, don't show popup.
+          // - Also if message text equals last text and time changed, still notify once (time-based).
+          // There's no sender info in users/{me}/chats; sender is only in chats/{id}/messages.
+          // So we assume "new message" should notify unless you're focused in that chat.
+          const shouldPopup = shouldShowNotificationForChat(chat.id);
+
+          // Sound: always play on "new chat update" unless you're focused in that chat (optional),
+          // but user asked sound for new notification: so play when it's NOT focused in that chat OR tab hidden.
+          const focused = (typeof document.hasFocus === 'function') ? document.hasFocus() : !document.hidden;
+          const isCurrentChat = currentChat && currentChat.id === chat.id;
+          const shouldSound = !(isCurrentChat && focused && !document.hidden);
+
+          if (shouldSound) playNotificationSound();
+          if (shouldPopup) {
+            showDesktopNotification(`${newWith}`, newText);
+          }
+
+          lastNotifiedChatTime[chat.id] = newTime;
+          lastNotifiedChatText[chat.id] = newText;
+          lastNotifiedChatSender[chat.id] = newWith;
+        } else {
+          // update cache even if no notify
+          lastNotifiedChatTime[chat.id] = newTime;
+          lastNotifiedChatText[chat.id] = chat.lastMessage || (lastNotifiedChatText[chat.id] || '');
+          lastNotifiedChatSender[chat.id] = chat.with || (lastNotifiedChatSender[chat.id] || '');
+        }
+      }
+    }
+    // ===== END GLOBAL NEW MESSAGE NOTIFICATIONS =====
 
     if (myGeneration !== chatListRenderGeneration) return;
     chatList.innerHTML = '';
@@ -608,6 +784,20 @@ async function openChat(chatId, friend) {
           console.log('Новое сообщение:', snap.key, msg);
           processedMessageIds.add(snap.key);
           lastMessageTimestamp = msg.timestamp;
+
+          // Если входящее сообщение пришло в ОТКРЫТЫЙ чат:
+          // - звук (если не фокус/не в этом чате — уже есть глобально, но тут тоже оставим как safety)
+          // - уведомление (если таб не в фокусе)
+          if (msg.sender !== currentUser.username) {
+            const focused = (typeof document.hasFocus === 'function') ? document.hasFocus() : !document.hidden;
+            if (!focused || document.hidden) {
+              playNotificationSound();
+              if (canShowDesktopNotifications() && shouldNotifyNow()) {
+                showDesktopNotification(`${msg.sender}`, msg.text || 'Новое сообщение');
+              }
+            }
+          }
+
           await addMessageToChat(msg);
           messages.scrollTop = messages.scrollHeight;
         }
@@ -808,7 +998,7 @@ async function autoLogin() {
     console.log('Пробуем автоматический вход для:', savedUser);
     loginUser.value = savedUser;
     loginPass.value = savedPass;
-    await login(savedUser, savedPass);
+    await login(savedUser, savedPass, true);
   }
 }
 
@@ -842,5 +1032,38 @@ Object.defineProperty(window.get, 'token', {
 });
 
 backBtn.onclick = closeChat;
+
 // Запускаем автовход после инициализации
 setTimeout(autoLogin, 0);
+
+// ===== Optional: first user interaction helps audio + notifications (no extra prompts) =====
+(function bindFirstInteractionForSoundWarmup(){
+  let warmed = false;
+  function warm() {
+    if (warmed) return;
+    warmed = true;
+    // Try to "unlock" audio on some browsers after user gesture
+    try {
+      if (notifSound) {
+        const prevVol = notifSound.volume;
+        notifSound.volume = 0.0;
+        const p = notifSound.play();
+        if (p && typeof p.then === 'function') {
+          p.then(() => {
+            try { notifSound.pause(); } catch (e) {}
+            try { notifSound.currentTime = 0; } catch (e) {}
+            notifSound.volume = prevVol;
+          }).catch(() => {
+            notifSound.volume = prevVol;
+          });
+        } else {
+          notifSound.volume = prevVol;
+        }
+      }
+    } catch (e) {}
+    window.removeEventListener('pointerdown', warm, true);
+    window.removeEventListener('keydown', warm, true);
+  }
+  window.addEventListener('pointerdown', warm, true);
+  window.addEventListener('keydown', warm, true);
+})();
