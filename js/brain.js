@@ -32,6 +32,96 @@ let readStatusRef = null;
 let readStatusListener = null;
 const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
 
+// === SHA-256 helpers (WebCrypto) ===
+function bytesToHex(bytes) {
+  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+function genSaltHex(lenBytes = 16) { // 16 bytes = 128-bit salt
+  const b = new Uint8Array(lenBytes);
+  crypto.getRandomValues(b);
+  return bytesToHex(b);
+}
+async function sha256Hex(str) {
+  const data = new TextEncoder().encode(str);
+  const digest = await crypto.subtle.digest('SHA-256', data);
+  return bytesToHex(new Uint8Array(digest));
+}
+// hash = SHA256(salt + ":" + password)
+async function hashPassword(password, saltHex) {
+  return sha256Hex(`${saltHex}:${password}`);
+}
+
+// ===== Safe date/time helpers (FIX Invalid Date) =====
+function parseTimestamp(ts) {
+  // returns number (ms) or null
+  if (typeof ts === 'number' && Number.isFinite(ts)) return ts;
+
+  // Firebase may store as string in older data
+  if (typeof ts === 'string') {
+    const n = Number(ts);
+    if (Number.isFinite(n)) return n;
+  }
+
+  // If someone saved {".sv":"timestamp"} etc — ignore here
+  return null;
+}
+
+function formatTime(ts) {
+  const t = parseTimestamp(ts);
+  if (!t) return '—';
+  const d = new Date(t);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+}
+
+function normalizeMessage(raw) {
+  const msg = raw && typeof raw === 'object' ? raw : {};
+  const sender = (typeof msg.sender === 'string' && msg.sender.trim()) ? msg.sender.trim() : 'Unknown';
+  const text = (msg.text == null) ? '' : String(msg.text);
+  const ts = parseTimestamp(msg.timestamp) ?? Date.now();
+
+  return {
+    ...msg,
+    sender,
+    text,
+    timestamp: ts
+  };
+}
+
+function inferFriendFromChatId(chatId, me) {
+  // chatId is deterministic: [userA,userB].sort().join('_')
+  // If old chat record missed `with`, we try to infer.
+  if (!chatId || !me) return null;
+  const parts = String(chatId).split('_');
+  // Typical case: exactly 2 parts.
+  if (parts.length === 2) {
+    const [a, b] = parts;
+    if (a === me) return b;
+    if (b === me) return a;
+  }
+  // Fallback: choose any part that is not me (best-effort)
+  const other = parts.find(p => p && p !== me);
+  return other || null;
+}
+
+function normalizeChatRecord(chatId, rawChat, me) {
+  const chat = rawChat && typeof rawChat === 'object' ? rawChat : {};
+  const withUser = (typeof chat.with === 'string' && chat.with.trim())
+    ? chat.with.trim()
+    : (inferFriendFromChatId(chatId, me) || 'Собеседник');
+
+  const lastMessage = (chat.lastMessage == null) ? '' : String(chat.lastMessage);
+  const lastMessageTime = parseTimestamp(chat.lastMessageTime) ?? 0;
+
+  return {
+    id: chatId,
+    ...chat,
+    with: withUser,
+    lastMessage,
+    lastMessageTime
+  };
+}
+
 // ===== Desktop notifications + sound (TAB OPEN / SITE RUNNING) =====
 const NOTIF_ASKED_KEY = 'fireguild_notif_asked_v1';
 let notifSound = null;
@@ -58,13 +148,9 @@ function playNotificationSound() {
     notifSound.currentTime = 0;
     const p = notifSound.play();
     if (p && typeof p.catch === 'function') {
-      p.catch(() => {
-        // Autoplay policy may block until user interaction
-      });
+      p.catch(() => {});
     }
-  } catch (e) {
-    // ignore
-  }
+  } catch (e) {}
 }
 
 function canShowDesktopNotifications() {
@@ -81,7 +167,6 @@ function showDesktopNotification(title, body) {
       try { window.focus(); } catch (e) {}
       try { n.close(); } catch (e) {}
     };
-    // auto close
     setTimeout(() => {
       try { n.close(); } catch (e) {}
     }, 7000);
@@ -93,11 +178,9 @@ function showDesktopNotification(title, body) {
 async function maybeRequestNotificationPermission(options = { force: false }) {
   if (!("Notification" in window)) return false;
 
-  // already granted/denied
   if (Notification.permission === 'granted') return true;
   if (Notification.permission === 'denied') return false;
 
-  // avoid repeated prompts
   const asked = localStorage.getItem(NOTIF_ASKED_KEY);
   if (asked && !options.force) return false;
 
@@ -112,7 +195,6 @@ async function maybeRequestNotificationPermission(options = { force: false }) {
   }
 }
 
-// throttle notifications a bit (avoid spam)
 function shouldNotifyNow() {
   const now = Date.now();
   if (now - lastNotifiedAt < 900) return false;
@@ -120,19 +202,13 @@ function shouldNotifyNow() {
   return true;
 }
 
-// Decide whether to show notification (if tab is not focused or user is not in that chat)
 function shouldShowNotificationForChat(chatId) {
   const focused = (typeof document.hasFocus === 'function') ? document.hasFocus() : !document.hidden;
   const isCurrentChat = currentChat && currentChat.id === chatId;
-
-  // If you're in the same chat AND page focused => don't show desktop popup, but still can play sound (optional)
   if (isCurrentChat && focused && !document.hidden) return false;
-
-  // Otherwise show if permission granted and not too frequent
   return canShowDesktopNotifications() && shouldNotifyNow();
 }
 
-// init sound early
 initNotificationSound();
 
 // DOM elements
@@ -157,8 +233,7 @@ const backBtn = document.getElementById('backBtn');
 const userSearchInput = document.getElementById('userSearchInput');
 const userSearchBtn = document.getElementById('userSearchBtn');
 
-// На некоторых мобильных браузерах первый фокус в поле может странно инициализировать раскладку.
-// Делаем один «перефокус», чтобы привести клавиатуру в нормальное состояние для русского ввода.
+// Mobile input fix
 if (isMobile && msgInput) {
   let msgInputFixApplied = false;
   msgInput.addEventListener('focus', () => {
@@ -172,15 +247,13 @@ if (isMobile && msgInput) {
   });
 }
 
-// Функция для установки cookie
+// Cookie helpers
 function setCookie(name, value, days) {
   const date = new Date();
   date.setTime(date.getTime() + (days * 24 * 60 * 60 * 1000));
   const expires = "; expires=" + date.toUTCString();
   document.cookie = name + "=" + (value || "") + expires + "; path=/; SameSite=Lax";
 }
-
-// Функция для получения cookie
 function getCookie(name) {
   const nameEQ = name + "=";
   const ca = document.cookie.split(';');
@@ -191,13 +264,11 @@ function getCookie(name) {
   }
   return null;
 }
-
-// Функция для удаления cookie
 function deleteCookie(name) {
   document.cookie = name + '=; path=/; expires=Thu, 01 Jan 1970 00:00:00 UTC; SameSite=Lax';
 }
 
-// Функция для проверки верификации пользователя
+// Verification helpers
 async function isUserVerified(username) {
   try {
     const userRef = ref(db, `users/${username}`);
@@ -208,30 +279,23 @@ async function isUserVerified(username) {
     return false;
   }
 }
-
-// Функция для получения отображаемого имени с красивой галочкой
 async function getDisplayNameWithBadge(username) {
-    const verified = await isUserVerified(username);
-    if (verified) {
-        return {
-            name: username,
-            verified: true,
-            html: `${username}<span class="verified-badge"></span>`
-        };
-    }
+  const safeName = (typeof username === 'string' && username.trim()) ? username.trim() : 'Unknown';
+  const verified = await isUserVerified(safeName);
+  if (verified) {
     return {
-        name: username,
-        verified: false,
-        html: username
+      name: safeName,
+      verified: true,
+      html: `${safeName}<span class="verified-badge"></span>`
     };
+  }
+  return { name: safeName, verified: false, html: safeName };
 }
-
-// Обновленная функция обновления отображения пользователя
 async function updateUserDisplay() {
-    if (currentUser) {
-        const displayData = await getDisplayNameWithBadge(currentUser.username);
-        myName.innerHTML = displayData.html;
-    }
+  if (currentUser) {
+    const displayData = await getDisplayNameWithBadge(currentUser.username);
+    myName.innerHTML = displayData.html;
+  }
 }
 
 // Mobile menu handlers
@@ -265,11 +329,10 @@ if (userSearchBtn && userSearchInput) {
   });
 }
 
-// Close sidebar when clicking outside
 document.addEventListener('click', (e) => {
-  if(window.innerWidth <= 768 && 
-     sidebar.classList.contains('active') && 
-     !sidebar.contains(e.target) && 
+  if(window.innerWidth <= 768 &&
+     sidebar.classList.contains('active') &&
+     !sidebar.contains(e.target) &&
      !menuToggle.contains(e.target)) {
     sidebar.classList.remove('active');
   }
@@ -280,13 +343,11 @@ async function setupPresence(username) {
     const statusRef = ref(db, `presence/${username}`);
     presenceStatusRef = statusRef;
 
-    // Помечаем онлайн
     await set(statusRef, {
       online: true,
       lastSeen: Date.now()
     });
 
-    // Сервер автоматически отметит офлайн при разрыве соединения
     try {
       const disconn = onDisconnect(statusRef);
       disconn.set({
@@ -297,7 +358,6 @@ async function setupPresence(username) {
       console.error('onDisconnect error:', e);
     }
 
-    // На случай закрытия вкладки/приложения
     window.addEventListener('beforeunload', () => {
       set(statusRef, {
         online: false,
@@ -309,16 +369,16 @@ async function setupPresence(username) {
   }
 }
 
-// Получить ID чата для пары пользователей (детерминированный)
+// deterministic chatId
 function getChatIdForUsers(userA, userB) {
   return [userA, userB].sort().join('_');
 }
 
-// Регистрация
+// Registration
 registerBtn.onclick = async () => {
   const u = loginUser.value.trim();
   const p = loginPass.value.trim();
-  
+
   if(!u || !p) {
     alert('Введите логин и пароль');
     return;
@@ -327,27 +387,30 @@ registerBtn.onclick = async () => {
   try {
     const userRef = ref(db, `users/${u}`);
     const snap = await get(userRef);
-    
+
     if(snap.exists()) {
       alert('Пользователь уже существует');
       return;
     }
-    
+
+    const salt = genSaltHex(16);
+    const passwordHash = await hashPassword(p, salt);
+
     await set(userRef, {
-      password: p,
+      passwordHash,
+      salt,
       created: Date.now(),
       verified: false
     });
-    
+
     alert('Регистрация успешна! Теперь войдите.');
-    
   } catch(e) {
     console.error('Registration error:', e);
     alert('Ошибка регистрации: ' + e.message);
   }
 };
 
-// Функция входа
+// Login
 async function login(username, password, isAuto = false) {
   if(!username || !password) {
     alert('Введите логин и пароль');
@@ -358,55 +421,68 @@ async function login(username, password, isAuto = false) {
     console.log('Пытаемся войти как:', username);
     const userRef = ref(db, `users/${username}`);
     const snap = await get(userRef);
-    
+
     if(!snap.exists()) {
       alert('Пользователь не найден');
       return false;
     }
-    
-    if(snap.val().password !== password) {
-      alert('Неверный пароль');
-      return false;
-    }
 
-    if (snap.val().banned) {
+    const userData = snap.val();
+
+    if (userData.banned) {
       alert('Этот аккаунт заблокирован администрацией');
       return false;
     }
 
-    currentUser = {username: username};
-    
-    // Сохраняем в cookie на 30 дней
-    setCookie('fireguild_user', username, 30);
-    setCookie('fireguild_pass', password, 30);
+    if (userData.passwordHash && userData.salt) {
+      const tryHash = await hashPassword(password, userData.salt);
+      if (tryHash !== userData.passwordHash) {
+        alert('Неверный пароль');
+        return false;
+      }
 
-    // Обновляем статус присутствия
+      setCookie('fireguild_user', username, 30);
+      setCookie('fireguild_passhash', tryHash, 30);
+      deleteCookie('fireguild_pass');
+    } else if (typeof userData.password === 'string') {
+      if (userData.password !== password) {
+        alert('Неверный пароль');
+        return false;
+      }
+
+      const salt = genSaltHex(16);
+      const passwordHash = await hashPassword(password, salt);
+      await update(ref(db, `users/${username}`), {
+        passwordHash,
+        salt,
+        password: null
+      });
+
+      setCookie('fireguild_user', username, 30);
+      setCookie('fireguild_passhash', passwordHash, 30);
+      deleteCookie('fireguild_pass');
+    } else {
+      alert('У аккаунта некорректные данные пароля');
+      return false;
+    }
+
+    currentUser = {username: username};
+
     await setupPresence(username);
-    
-    // Показываем приложение
+
     auth.style.display = 'none';
     appDiv.style.display = 'flex';
-    
-    // Обновляем отображение имени с галочкой
+
     await updateUserDisplay();
-    
     myAvatar.textContent = username.charAt(0).toUpperCase();
-    
-    // ВАЖНО: запрос разрешения на уведомления — только при ручном входе (не при autoLogin),
-    // чтобы не терять ввод/промпты и не ловить блокировку браузера на авто-gesture.
+
     if (!isAuto) {
-      try {
-        await maybeRequestNotificationPermission();
-      } catch (e) {
-        console.error('maybeRequestNotificationPermission error:', e);
-      }
+      try { await maybeRequestNotificationPermission(); } catch (e) {}
     }
-    
-    // Загружаем чаты
+
     loadChats();
-    
     return true;
-    
+
   } catch(e) {
     console.error('Login error:', e);
     alert('Ошибка подключения: ' + e.message);
@@ -414,16 +490,14 @@ async function login(username, password, isAuto = false) {
   }
 }
 
-// Обработчик кнопки входа
 loginBtn.onclick = () => {
   const u = loginUser.value.trim();
   const p = loginPass.value;
   login(u, p, false);
 };
 
-// Выход
+// Logout
 logoutBtn.onclick = () => {
-  // Очищаем слушатели
   if(chatListUnsubscribe) {
     chatListUnsubscribe();
     chatListUnsubscribe = null;
@@ -433,12 +507,11 @@ logoutBtn.onclick = () => {
     messagesListener = null;
     currentMessagesRef = null;
   }
-  
-  // Удаляем cookie
+
   deleteCookie('fireguild_user');
   deleteCookie('fireguild_pass');
+  deleteCookie('fireguild_passhash');
 
-  // Отмечаем офлайн
   if (presenceStatusRef) {
     set(presenceStatusRef, {
       online: false,
@@ -446,26 +519,22 @@ logoutBtn.onclick = () => {
     });
     presenceStatusRef = null;
   }
-  
-  // Сбрасываем состояние
+
   currentUser = null;
   currentChat = null;
   processedMessageIds.clear();
   isLoadingMessages = false;
   lastMessageTimestamp = 0;
 
-  // reset notif tracking for this session
   chatListInitialLoadDone = false;
   lastNotifiedChatTime = Object.create(null);
   lastNotifiedChatText = Object.create(null);
   lastNotifiedChatSender = Object.create(null);
   lastNotifiedAt = 0;
-  
-  // Показываем экран входа
+
   appDiv.style.display = 'none';
   auth.style.display = 'flex';
-  
-  // Очищаем поля
+
   messages.innerHTML = '';
   chatList.innerHTML = '';
   chatTitle.textContent = 'Выберите чат';
@@ -495,17 +564,15 @@ async function loadChats() {
 
     const currentChatId = currentChat?.id;
     const chats = [];
+
     snap.forEach(child => {
-      chats.push({
-        id: child.key,
-        ...child.val()
-      });
+      const normalized = normalizeChatRecord(child.key, child.val(), currentUser.username);
+      chats.push(normalized);
     });
+
     chats.sort((a, b) => (b.lastMessageTime || 0) - (a.lastMessageTime || 0));
 
-    // ===== GLOBAL NEW MESSAGE NOTIFICATIONS (TAB OPEN) =====
-    // We notify based on users/{me}/chats updates (works for ANY chat, even if not opened).
-    // On first load: fill the cache, do not notify.
+    // notifications cache
     if (!chatListInitialLoadDone) {
       for (const chat of chats) {
         lastNotifiedChatTime[chat.id] = chat.lastMessageTime || 0;
@@ -518,57 +585,38 @@ async function loadChats() {
         const prevTime = lastNotifiedChatTime[chat.id] || 0;
         const newTime = chat.lastMessageTime || 0;
 
-        // message updated
         if (newTime > prevTime && chat.lastMessage && chat.with) {
-          const prevText = lastNotifiedChatText[chat.id] || '';
-          const newText = chat.lastMessage || '';
-          const prevWith = lastNotifiedChatSender[chat.id] || '';
-          const newWith = chat.with || '';
-
-          // Avoid notifying for your own outgoing messages:
-          // In your schema `with` is friend username, so outgoing messages still update your own chats with same friend.
-          // So we need an extra heuristic:
-          // - If you're currently in that chat and focused, don't show popup.
-          // - Also if message text equals last text and time changed, still notify once (time-based).
-          // There's no sender info in users/{me}/chats; sender is only in chats/{id}/messages.
-          // So we assume "new message" should notify unless you're focused in that chat.
           const shouldPopup = shouldShowNotificationForChat(chat.id);
 
-          // Sound: always play on "new chat update" unless you're focused in that chat (optional),
-          // but user asked sound for new notification: so play when it's NOT focused in that chat OR tab hidden.
           const focused = (typeof document.hasFocus === 'function') ? document.hasFocus() : !document.hidden;
           const isCurrentChat = currentChat && currentChat.id === chat.id;
           const shouldSound = !(isCurrentChat && focused && !document.hidden);
 
           if (shouldSound) playNotificationSound();
           if (shouldPopup) {
-            showDesktopNotification(`${newWith}`, newText);
+            showDesktopNotification(`${chat.with}`, chat.lastMessage);
           }
 
           lastNotifiedChatTime[chat.id] = newTime;
-          lastNotifiedChatText[chat.id] = newText;
-          lastNotifiedChatSender[chat.id] = newWith;
+          lastNotifiedChatText[chat.id] = chat.lastMessage || '';
+          lastNotifiedChatSender[chat.id] = chat.with || '';
         } else {
-          // update cache even if no notify
           lastNotifiedChatTime[chat.id] = newTime;
           lastNotifiedChatText[chat.id] = chat.lastMessage || (lastNotifiedChatText[chat.id] || '');
           lastNotifiedChatSender[chat.id] = chat.with || (lastNotifiedChatSender[chat.id] || '');
         }
       }
     }
-    // ===== END GLOBAL NEW MESSAGE NOTIFICATIONS =====
 
     if (myGeneration !== chatListRenderGeneration) return;
     chatList.innerHTML = '';
 
     for (const chat of chats) {
       if (myGeneration !== chatListRenderGeneration) break;
-      const friend = chat.with || 'Собеседник';
 
-      // Имя + верификация
+      const friend = chat.with || 'Собеседник';
       const displayData = await getDisplayNameWithBadge(friend);
 
-      // Статус онлайна собеседника
       let online = false;
       try {
         const statusSnap = await get(ref(db, `presence/${friend}`));
@@ -618,7 +666,6 @@ async function findOrCreateChatWithUser(friendUsername) {
   }
 
   try {
-    // Проверяем, существует ли такой пользователь и не заблокирован ли он
     const userRef = ref(db, `users/${target}`);
     const userSnap = await get(userRef);
     if (!userSnap.exists()) {
@@ -630,7 +677,6 @@ async function findOrCreateChatWithUser(friendUsername) {
       return null;
     }
 
-    // Ищем уже существующий чат с этим пользователем
     const userChatsRef = ref(db, `users/${currentUser.username}/chats`);
     const chatsSnap = await get(userChatsRef);
     let existingChatId = null;
@@ -647,7 +693,6 @@ async function findOrCreateChatWithUser(friendUsername) {
       return { id: existingChatId, friend: target };
     }
 
-    // Создаем новый чат с детерминированным ID
     const chatId = getChatIdForUsers(currentUser.username, target);
     const now = Date.now();
 
@@ -686,13 +731,9 @@ function renderChatHeader(friendDisplayData, online) {
 
 async function openChat(chatId, friend) {
   console.log('Открываем чат:', chatId, friend);
-  
-  // Если уже открыт этот же чат, ничего не делаем
-  if(currentChat?.id === chatId) {
-    return;
-  }
-  
-  // Очищаем предыдущий слушатель
+
+  if(currentChat?.id === chatId) return;
+
   if(currentMessagesRef && messagesListener) {
     off(currentMessagesRef, 'child_added', messagesListener);
     messagesListener = null;
@@ -708,86 +749,69 @@ async function openChat(chatId, friend) {
     readStatusRef = null;
     readStatusListener = null;
   }
-  
-  // Очищаем множество обработанных сообщений
+
   processedMessageIds.clear();
   isLoadingMessages = true;
   lastMessageTimestamp = 0;
 
-  const friendDisplayData = await getDisplayNameWithBadge(friend);
-  currentChat = {id: chatId, friend, friendDisplayData};
-  
-  // Заголовок с красивой галочкой и статусом
+  const safeFriend = (typeof friend === 'string' && friend.trim()) ? friend.trim() : (inferFriendFromChatId(chatId, currentUser.username) || 'Собеседник');
+  const friendDisplayData = await getDisplayNameWithBadge(safeFriend);
+
+  currentChat = {id: chatId, friend: safeFriend, friendDisplayData};
+
   renderChatHeader(friendDisplayData, false);
 
-  // Слушаем статус присутствия собеседника
-  friendStatusRef = ref(db, `presence/${friend}`);
+  friendStatusRef = ref(db, `presence/${safeFriend}`);
   onValue(friendStatusRef, (snap) => {
     const val = snap.val();
     const online = !!(val && val.online);
-    if (currentChat && currentChat.friend === friend) {
+    if (currentChat && currentChat.friend === safeFriend) {
       renderChatHeader(currentChat.friendDisplayData || friendDisplayData, online);
     }
   });
-  
+
   chatInput.style.display = 'flex';
   messages.innerHTML = '<div style="color:#8b98a5; text-align:center; padding:20px;">Загрузка сообщений...</div>';
 
-  // Загружаем последние сообщения
   const messagesRef = ref(db, `chats/${chatId}/messages`);
   const messagesQuery = query(messagesRef, limitToLast(50));
-  
+
   get(messagesQuery).then((snap) => {
-    messages.innerHTML = ''; // Очищаем сообщение о загрузке
-    
+    messages.innerHTML = '';
+
     if(snap.exists()) {
       const messages_array = [];
       snap.forEach(child => {
-        messages_array.push({
-          id: child.key,
-          ...child.val()
-        });
+        messages_array.push(normalizeMessage({ id: child.key, ...child.val() }));
       });
-      
-      // Сортируем по времени
-      messages_array.sort((a, b) => a.timestamp - b.timestamp);
-      
-      // Добавляем все сообщения
+
+      messages_array.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+
       messages_array.forEach(msg => {
         processedMessageIds.add(msg.id);
-        if (msg.timestamp > lastMessageTimestamp) {
-          lastMessageTimestamp = msg.timestamp;
-        }
+        if (msg.timestamp > lastMessageTimestamp) lastMessageTimestamp = msg.timestamp;
         addMessageToChat(msg);
       });
-      
+
       messages.scrollTop = messages.scrollHeight;
     }
-    
+
     isLoadingMessages = false;
-    
-    // Устанавливаем слушатель только для новых сообщений
+
     const newMessagesQuery = query(messagesRef, limitToLast(1));
-    
     currentMessagesRef = newMessagesQuery;
-    
+
     messagesListener = onChildAdded(newMessagesQuery, async (snap) => {
-      // Игнорируем сообщения во время загрузки
       if (isLoadingMessages) return;
-      
-      // Проверяем, не было ли уже это сообщение обработано
+
       if (!processedMessageIds.has(snap.key)) {
-        const msg = { id: snap.key, ...snap.val() };
-        
-        // Дополнительная проверка по времени для защиты от дублей
+        const msg = normalizeMessage({ id: snap.key, ...snap.val() });
+
         if (msg.timestamp > lastMessageTimestamp) {
           console.log('Новое сообщение:', snap.key, msg);
           processedMessageIds.add(snap.key);
           lastMessageTimestamp = msg.timestamp;
 
-          // Если входящее сообщение пришло в ОТКРЫТЫЙ чат:
-          // - звук (если не фокус/не в этом чате — уже есть глобально, но тут тоже оставим как safety)
-          // - уведомление (если таб не в фокусе)
           if (msg.sender !== currentUser.username) {
             const focused = (typeof document.hasFocus === 'function') ? document.hasFocus() : !document.hidden;
             if (!focused || document.hidden) {
@@ -804,7 +828,6 @@ async function openChat(chatId, friend) {
       }
     });
 
-    // Слушатель изменений для обновления статуса прочтения (галочки)
     readStatusRef = messagesQuery;
     readStatusListener = onValue(readStatusRef, (snap) => {
       if (!currentChat || currentChat.id !== chatId) return;
@@ -814,7 +837,8 @@ async function openChat(chatId, friend) {
       if (!friendUsername) return;
 
       snap.forEach(child => {
-        const msg = { id: child.key, ...child.val() };
+        const raw = { id: child.key, ...child.val() };
+        const msg = normalizeMessage(raw);
         if (msg.sender !== currentUser.username) return;
 
         const readBy = msg.readBy || {};
@@ -831,7 +855,7 @@ async function openChat(chatId, friend) {
         statusSpan.classList.toggle('sent', !readByFriend);
       });
     });
-    
+
   }).catch(error => {
     console.error('Ошибка загрузки сообщений:', error);
     messages.innerHTML = '<div style="color:#ff6b6b; text-align:center; padding:20px;">Ошибка загрузки сообщений</div>';
@@ -839,13 +863,17 @@ async function openChat(chatId, friend) {
   });
 }
 
-// Обновленная функция добавления сообщения в чат
-async function addMessageToChat(msg) {
-  // Проверяем, существует ли уже такое сообщение в DOM
+// Add message (FIX sender/timestamp safety)
+async function addMessageToChat(rawMsg) {
+  const msg = normalizeMessage(rawMsg);
+
+  // Soft dedupe (do not crash on invalid dates)
   const existingMessages = messages.querySelectorAll('.msg');
+  const thisTime = formatTime(msg.timestamp);
+
   for (let existingMsg of existingMessages) {
     const timeDiv = existingMsg.querySelector('.time');
-    if (timeDiv && timeDiv.textContent.includes(new Date(msg.timestamp).toLocaleTimeString('ru-RU', {hour: '2-digit', minute: '2-digit'}))) {
+    if (timeDiv && thisTime !== '—' && timeDiv.textContent.includes(thisTime)) {
       const msgText = existingMsg.childNodes[0]?.nodeValue?.trim();
       if (msgText === msg.text) {
         console.log('Сообщение уже есть в DOM, пропускаем');
@@ -853,30 +881,28 @@ async function addMessageToChat(msg) {
       }
     }
   }
-  
+
   const mine = msg.sender === currentUser.username;
   const friendUsername = currentChat?.friend;
   const readBy = msg.readBy || {};
   const readByFriend = mine && friendUsername ? !!readBy[friendUsername] : false;
-  
+
   const div = document.createElement('div');
   div.className = 'msg ' + (mine ? 'mine' : 'other');
-  div.setAttribute('data-message-id', msg.id || Date.now() + Math.random()); // Для отладки
-  
-  // Получаем имя отправителя с красивой галочкой
+  div.setAttribute('data-message-id', msg.id || (Date.now() + '_' + Math.random()));
+
   const senderDisplayData = await getDisplayNameWithBadge(msg.sender);
-  
+
   div.innerHTML = `
     <div class="sender-name">${senderDisplayData.html}</div>
     ${escapeHtml(msg.text)}
     <div class="time">
-      <span class="time-text">${new Date(msg.timestamp).toLocaleTimeString('ru-RU', {hour: '2-digit', minute: '2-digit'})}</span>
+      <span class="time-text">${formatTime(msg.timestamp)}</span>
       ${mine ? `<span class="msg-status ${readByFriend ? 'read' : 'sent'}">${readByFriend ? '✔✔' : '✔'}</span>` : ''}
     </div>
   `;
   messages.appendChild(div);
 
-  // Помечаем входящее сообщение как прочитанное
   if (!mine && currentChat && msg.id) {
     try {
       await set(ref(db, `chats/${currentChat.id}/messages/${msg.id}/readBy/${currentUser.username}`), true);
@@ -908,7 +934,7 @@ function closeChat() {
   chatTitle.textContent = 'Выберите чат';
   chatInput.style.display = 'none';
   messages.innerHTML = '';
-  
+
   if(window.innerWidth <= 768) {
     sidebar.classList.add('active');
   }
@@ -932,7 +958,6 @@ async function sendMessage() {
   const text = msgInput.textContent.trim();
   if(!text || !currentChat || isSending) return;
 
-  // Блокируем повторную отправку
   isSending = true;
   sendBtn.disabled = true;
 
@@ -942,21 +967,17 @@ async function sendMessage() {
     timestamp: Date.now()
   };
 
-  // Сохраняем текст для восстановления в случае ошибки
   const originalText = text;
   msgInput.textContent = '';
 
   try {
-    // Сохраняем сообщение и получаем его ключ
     const newMessageRef = await push(ref(db, `chats/${currentChat.id}/messages`), message);
-    
-    // Добавляем ключ в множество обработанных сообщений
+
     processedMessageIds.add(newMessageRef.key);
     if (message.timestamp > lastMessageTimestamp) {
       lastMessageTimestamp = message.timestamp;
     }
-    
-    // Обновляем последнее сообщение в списке чатов для обоих пользователей
+
     const now = Date.now();
     const updates = [
       update(ref(db, `users/${currentUser.username}/chats/${currentChat.id}`), {
@@ -977,55 +998,66 @@ async function sendMessage() {
     }
 
     await Promise.all(updates);
-    
+
   } catch(e) {
     console.error('Ошибка отправки:', e);
     alert('Ошибка отправки');
     msgInput.textContent = originalText;
   } finally {
-    // Разблокируем отправку
     isSending = false;
     sendBtn.disabled = false;
   }
 }
 
-// Автовход из cookie (30 дней)
+// Auto login from cookie (hash)
 async function autoLogin() {
   const savedUser = getCookie('fireguild_user');
-  const savedPass = getCookie('fireguild_pass');
-  
-  if(savedUser && savedPass) {
+  const savedHash = getCookie('fireguild_passhash');
+
+  if(savedUser && savedHash) {
     console.log('Пробуем автоматический вход для:', savedUser);
-    loginUser.value = savedUser;
-    loginPass.value = savedPass;
-    await login(savedUser, savedPass, true);
+
+    try {
+      const userRef = ref(db, `users/${savedUser}`);
+      const snap = await get(userRef);
+      if (!snap.exists()) return;
+
+      const data = snap.val();
+      if (data && data.passwordHash && savedHash === data.passwordHash) {
+        currentUser = { username: savedUser };
+
+        await setupPresence(savedUser);
+
+        auth.style.display = 'none';
+        appDiv.style.display = 'flex';
+
+        await updateUserDisplay();
+        myAvatar.textContent = savedUser.charAt(0).toUpperCase();
+
+        loadChats();
+      }
+    } catch (e) {
+      console.error('autoLogin error:', e);
+    }
   }
 }
 
-// === Console command: get.token (без скобок, с подтверждением) ===
+// Console command: get.token
 Object.defineProperty(window, 'get', {
   value: {},
   writable: false
 });
-
 Object.defineProperty(window.get, 'token', {
   get() {
-    const confirmGet = confirm('Точно ли вы хотите получить токен?');
-
-    if (!confirmGet) {
-      console.log('Получение токена отменено');
-      return null;
-    }
-
     const user = getCookie('fireguild_user');
-    const pass = getCookie('fireguild_pass');
+    const passhash = getCookie('fireguild_passhash');
 
-    if (!user || !pass) {
-      console.log('Куки не найдены');
+    if (!user || !passhash) {
+      console.log('Токен не найден (нет cookie user/passhash)');
       return null;
     }
 
-    const token = `${user}:${pass}`;
+    const token = `${user}:${passhash}`;
     console.log(token);
     return token;
   }
@@ -1033,16 +1065,14 @@ Object.defineProperty(window.get, 'token', {
 
 backBtn.onclick = closeChat;
 
-// Запускаем автовход после инициализации
 setTimeout(autoLogin, 0);
 
-// ===== Optional: first user interaction helps audio + notifications (no extra prompts) =====
+// Audio warmup
 (function bindFirstInteractionForSoundWarmup(){
   let warmed = false;
   function warm() {
     if (warmed) return;
     warmed = true;
-    // Try to "unlock" audio on some browsers after user gesture
     try {
       if (notifSound) {
         const prevVol = notifSound.volume;
